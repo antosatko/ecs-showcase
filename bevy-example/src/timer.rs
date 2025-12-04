@@ -2,6 +2,8 @@ use std::time::Instant;
 
 use std::time::Duration;
 
+pub const MAIN_ITERATIONS: usize = 60;
+
 pub(crate) struct MeasureTask {
     pub init_duration: Duration,
     pub main_duration: Duration,
@@ -14,7 +16,7 @@ impl MeasureTask {
         let mut state = init();
         let init_duration = start.elapsed();
         let start = Instant::now();
-        for _ in 0..60 {
+        for _ in 0..MAIN_ITERATIONS {
             main(&mut state);
         }
         let main_duration = start.elapsed();

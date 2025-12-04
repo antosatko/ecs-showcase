@@ -1,7 +1,4 @@
-use std::{
-    fmt::{Display, Write},
-    ops::Range,
-};
+use std::{fmt::Display, ops::Range};
 
 use bevy_ecs::component::Component;
 use rand::random_range;
