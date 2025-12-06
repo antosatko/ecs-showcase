@@ -1,5 +1,5 @@
 use crate::{
-    helpers::{BIG_NUMBER, Float2, Garbage},
+    helpers::{AnyData, BIG_NUMBER, Float2},
     timer::MeasureTask,
 };
 
@@ -7,7 +7,7 @@ pub fn move_all() {
     struct Unit {
         pub position: Float2,
         pub velocity: Float2,
-        pub garbage: Garbage,
+        pub any_data: AnyData,
     }
 
     impl Unit {
@@ -30,7 +30,7 @@ pub fn move_all() {
                 units.push(Unit {
                     position: Float2::random(0.0..100.0),
                     velocity: Float2::random(-5.0..5.0),
-                    garbage: Garbage::default(),
+                    any_data: AnyData::default(),
                 });
             }
 

@@ -3,20 +3,20 @@ use bevy_ecs::{
 };
 
 use crate::{
-    helpers::{BIG_NUMBER, Float2, Garbage},
+    helpers::{AnyData, BIG_NUMBER, Float2},
     timer::MeasureTask,
 };
 
-#[derive(Debug, Component)]
-struct Position(pub Float2);
-
-#[derive(Debug, Component)]
-struct Velocity(pub Float2);
-
-#[derive(Debug, Component)]
-struct GravityTag;
-
 pub fn move_all() {
+    #[derive(Debug, Component)]
+    struct Position(pub Float2);
+
+    #[derive(Debug, Component)]
+    struct Velocity(pub Float2);
+
+    #[derive(Debug, Component)]
+    struct GravityTag;
+
     fn movement(mut query: Query<(&mut Position, &Velocity)>) {
         for (mut position, velocity) in &mut query {
             position.0.0 += velocity.0.0;
@@ -40,14 +40,13 @@ pub fn move_all() {
                 (
                     Position(Float2::random(0.0..100.0)),
                     Velocity(Float2::random(-5.0..5.0)),
-                    Garbage::default(),
+                    AnyData::default(),
                     GravityTag,
                 )
             }));
 
             schedule.add_systems(gravity);
             schedule.add_systems(movement);
-
             (schedule, world)
         },
         |system| {

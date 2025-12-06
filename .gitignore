@@ -1,3 +1,4 @@
 bevy-example/target
 bevy-example/Cargo.lock
+target
 private.md

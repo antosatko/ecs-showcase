@@ -1,5 +1,5 @@
 use crate::{
-    helpers::{BIG_NUMBER, Float2, Garbage},
+    helpers::{AnyData, Float2, BIG_NUMBER},
     timer::MeasureTask,
 };
 
@@ -8,7 +8,7 @@ pub fn move_all() {
         entities: usize,
         positions: Vec<Float2>,
         velocities: Vec<Float2>,
-        garbage: Vec<Garbage>,
+        any_data: Vec<AnyData>,
     }
 
     MeasureTask::run(
@@ -18,13 +18,13 @@ pub fn move_all() {
                 entities: BIG_NUMBER,
                 positions: Vec::with_capacity(BIG_NUMBER),
                 velocities: Vec::with_capacity(BIG_NUMBER),
-                garbage: Vec::with_capacity(BIG_NUMBER),
+                any_data: Vec::with_capacity(BIG_NUMBER),
             };
 
             for _ in 0..state.entities {
                 state.positions.push(Float2::random(0.0..100.0));
                 state.velocities.push(Float2::random(-5.0..5.0));
-                state.garbage.push(Garbage::default());
+                state.any_data.push(AnyData::default());
             }
 
             state
@@ -38,3 +38,5 @@ pub fn move_all() {
         },
     );
 }
+
+pub mod simd;

@@ -11,7 +11,11 @@ pub(crate) struct MeasureTask {
 }
 
 impl MeasureTask {
-    pub(crate) fn run<T>(label: Option<&str>, init: fn() -> T, main: fn(&mut T)) -> Self {
+    pub(crate) fn run<T>(
+        label: Option<&str>,
+        init: impl FnOnce() -> T,
+        mut main: impl FnMut(&mut T),
+    ) -> Self {
         let start = Instant::now();
         let mut state = init();
         let init_duration = start.elapsed();
