@@ -17,7 +17,7 @@ of large entity counts.
   - [**Components**](#Components) - Atomic unit of data
   - [**Systems**](#Systems) - A procedure that *queries* for input to run on
   - [**World**](#World) - Central system managing *entities* and processing *queries*
-  - [**Query**](#Query) - Describes what kind of data should be passed to a *system*
+  - [**Queries**](#Queries) - Describes what kind of data should be passed to a *system*
 
 ### Entities
 
@@ -31,7 +31,7 @@ Additionally *components* can be dynamically added or removed on existing *entit
 
 Let's define how to create an entity in simple pseudo code
 
-```
+```js
 // empty entity
 spawn {
   // any number of components ...
@@ -52,17 +52,20 @@ tags).
 
 In pseudo code we can define *components* in two ways
 
-```
+```js
 // Component defined only with it's name (also called tag)
 component Sleepy
 
 // Component defined with name and data type
 component Velocity(float, float)
+
+// Component that references another entity
+component BestFriend(entity)
 ```
 
 To use a *component*, just pass it to an *entity* on creation
 
-```
+```js
 // an entity that is fast moving and sleepy
 spawn {
   Velocity(50, 50)
@@ -80,7 +83,7 @@ More on *queries* later.
 In pseudo code *system* implementation looks very similar to function implementations with the diference
 of having *query* instead of parameters.
 
-```
+```js
 // A system that moves all entities with Velocity and Position components
 system movement(entity: Velocity & mut Position) {
   entity.Position = entity.Position + entity.Velocity
@@ -99,8 +102,8 @@ the highest perfmormance while *querying*. It also manages paralelism for *syste
 the same time. This is not the same as ordering which can not be infered from the *world* structure
 and falls as a responsibility of the programmer.
 
-```
-// A world where is first run friction and then movement
+```js
+// A world where friction is run first and then follows movement
 schedule {
   friction
   movement
@@ -111,5 +114,50 @@ In this example `movement` depends on `friction` since it *queries* for a *compo
 mutated there (`Velocity`). Which means that those two *systems* can not be run in paralel and their
 ordering will be determined by position in *schedule*.
 
-### Query
+### Queries
 
+A *query* describes which *components* a *system* needs access to in order to execute.
+
+This includes:
+  - Which *components* are required
+  - Whether access is read-only or mutable
+  - Optional filters that exclude or include *entities* based on conditions
+
+In pseudo code:
+
+**Simple query**
+
+```js
+entity: C1
+```
+
+**Simple query with mutable access to component**
+
+```js
+entity: mut C1
+```
+
+**Multiple required components on entity**
+```js
+entity: C1 & C2 & C3
+```
+
+**Optional Component**
+```js
+entity: ?C1
+```
+
+**Excluded Component**
+```js
+entity: !C1
+```
+
+**Join on reference**
+```js
+entity: C1, entity.C1: C2
+```
+
+**Mutable access to entity**
+```js
+mut entity: C1
+```
