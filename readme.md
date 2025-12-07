@@ -11,6 +11,11 @@ into the central system which then optimizes memory structure for high efficienc
 Its main use is in simulations and game development but will be useful in any area with data consisting
 of large entity counts.
 
+## Table of contents
+
+  - [**Main concepts**](#Main-concepts:) - An introduction to *ECS*
+  - [**Benchmarks**](./bevy-example/readme.md) - Comparison with common design patterns
+
 ## Main concepts:
 
   - [**Entities**](#Entities) - An entity is a set of *components*
@@ -46,7 +51,7 @@ spawn {
 
 ### Components
 
-Components are actual data that *entities* may contain. Behaviour of the *entity* is based only on the
+Components are the actual data that *entities* contain. Behaviour of the *entity* is based only on the
 *components* it contains. Each *component* either has data type or has no data (those are sometimes called
 tags).
 
@@ -121,7 +126,7 @@ A *query* describes which *components* a *system* needs access to in order to ex
 This includes:
   - Which *components* are required
   - Whether access is read-only or mutable
-  - Optional filters that exclude or include *entities* based on conditions
+  - Filters that exclude or include *entities* based on conditions
 
 In pseudo code:
 
