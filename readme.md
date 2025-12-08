@@ -13,10 +13,10 @@ of large entity counts.
 
 ## Table of contents
 
-  - [**Main concepts**](#Main-concepts:) - An introduction to *ECS*
+  - [**Main concepts**](#Concepts) - An introduction to *ECS*
   - [**Benchmarks**](./bevy-example/readme.md) - Comparison with common design patterns
 
-## Main concepts:
+## Concepts
 
   - [**Entities**](#Entities) - An entity is a set of *components*
   - [**Components**](#Components) - Atomic unit of data

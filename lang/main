@@ -1,0 +1,128 @@
+const BASIC_IMAGE = Image("img/bullet.png")
+
+scheduler main {
+	resources {
+		Score(0)
+		SpawnInterval(60)
+	}
+
+	systems {
+		init
+		spawnBullets
+		applyPullForce
+		bMove
+		playerCollision
+		playerHit
+		removeEnemy
+	}
+}
+
+component Position = float2
+component Speed = float2
+component Radius = float
+component ScoreValue = uint
+component FavouriteEnemy = entity
+component PullForce
+component Hitbox
+component Enemy
+unique component Player
+
+compose EnemyRadius = Radius & Position & Enemy & Hitbox
+compose Pullable = Position & Speed & PullForce
+
+struct Score = float
+struct SpawnInterval = Interval
+struct Hit
+
+
+system init(action _: rt.Init) {
+	rt.spawn! {
+		Player
+		Position((SCREEN_WIDTH/2, SCREEN_HEIGHT-50))
+		Radius(3)
+		FavouriteEnemy(rt.spawn! {
+			Position((50, 50))
+			Speed((0, 0))
+			Radius(10)
+			BASIC_IMAGE
+		})
+	}
+}
+
+system spawnBullets(action _: SpawnInterval + rt.Action) {
+	var pos = Position(rand(SCREEN_WIDTH), -10)
+
+	var targetX = rand(SCREEN_WIDTH)
+	var targetPos = float2(targetX, SCREEN_HEIGHT + 10)
+
+	var dir = normalize(targetPos - pos)
+	var speed = Speed(dir * (1.5 + rand(1.5)))
+
+	rt.spawn! {
+		pos
+		speed
+		Radius(5)
+		BASIC_IMAGE
+		EnemyRadius
+		Pullable
+	}
+}
+
+system bMove(b: mut Position & Speed) {
+	b.Position += b.Speed
+}
+
+system playerCollision(p: Player & Radius, mut b: EnemyRadius) {
+	if collisionC2C(p.Position, p.Radius, b.Position, b.Radius) {
+		rt.delete! b
+		batch rt.action! Player.Hit
+	}
+}
+
+system playerHit(action _: Player + Hit) {
+	rt.quit!
+}
+
+system applyPullForce(pairs (a, b): mut Speed & Pullable) {
+	var delta = b.Position - a.Position
+
+	var dist = distance2(delta)
+	if dist < 1 { return }
+
+	var force = normalize(delta) * (1.0 / dist)
+
+	a.Speed += force * 0.2
+	b.Speed -= force * 0.2
+}
+
+system removeEnemy(action _: rt.Remove, entity: ?ScoreValue & Enemy) {
+	batch var scoreSum = 0
+	
+	scoreSum += entity.ScoreValue ?? 10
+	
+	batch rt.schedule! addScore(scoreSum)
+}
+
+system addScore(resource score: mut Score, arg v: float) {
+	score += v
+}
+
+system playerGotHisFav(
+	resource score: mut Score,
+	p: Player & mut FavouriteEnemy,
+	p.FavouriteEnemy as e: mut Radius & Position
+) {
+	if !collisionC2C(p.Position, p.Radius, e.Position, e.Radius) {
+		return;
+	}
+	e.Radius -= 0.1
+	score += 100
+	if e.Radius < 1 {
+		rt.remove! p.FavouriteEnemy
+	}
+}
+
+function collisionC2C(pos1: float2, rad1: float, pos2: float2, rad2: float): bool {
+	let delta = pos2 - pos1
+	return distance2(delta) <= rad1 + rad2
+}

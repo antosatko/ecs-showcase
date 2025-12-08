@@ -2,55 +2,51 @@
 
 This directory contains benchmarks of multiple design patterns including explanations for
 the results they generate. But to fully understand the results it is important to have
-some idea of how memory works.
+some idea of how memory works. Here is a simplified explanation for
+[memory caching](./bevy-example/caching.md).
 
-## Memory caching
 
-A common understanding of memory is that the CPU reads directly from RAM and thats it.
-This model can be represented as a function that takes a memory address (and maybe size)
-as input and outputs the stored data.
+## Benchmark explanation
 
-This could be the case in a perfect world, but main memory is much slower than the CPU
-and your program can not wait every time it needs to read/write memory.
+These benchmarks compare how different data layouts affect memory access and therefore performance.
 
-To solve this issue the CPU has its own built in memory where it temporarily caches data.
-The trade-off is that this memory is very small, so it only holds a limited amount of
-data. Every memory access stores not only the fetched address but also a small memory
-region around the fetched address.
-
-This means that while accessing densely packed structures, the CPU already has nearby values
-cached after a single fetch. This saves CPU cycles and speeds up the program. In practice,
-CPU caching can be used to optimize large object counts stored in a single array.
-
-### Example of caching
-
-Lets say we have an array of structures **A**, where each instance holds **n** values and we want
-to read the value **a0** of each instance. If we iterate over those structures as they are now,
-we also load a lot of additional memory with no use for it on each instance.
+### move_all – procedural
+Objects store all fields together, which is simple but causes poor cache locality.
+Each iteration loads unnecessary data.
 
 ```
-cpu cache:
-[ # # # # # # # a0 a1 a2 a3 a4 a5 a6 # # # # # # # # # ]
-
-main memory:
-[ a0 a1 a2 a3 a4 a5 a6 b0 b1 b2 b3 b4 b5 b6 c0 c1 c2 c3 c4 c5 c6 ]
+Main duration: 2.5489691s
 ```
 
-If we now want to access **b0**, we would need to load additional memory, which is costly.
-
-To optimize memory usage you want to group memory regions based on how they are accessed,
-so that when you need those values, you can reuse cached memory. In practice this means
-that instead of storing all structures in a single array you store each field in a separate
-array. This pattern is called a **Structure of Arrays** or **SoA**.
-
-After rewriting the structure using this pattern, you can get much faster results.
+### move_all – ecs
+ECS groups components by usage. Queries skip unrelated data, improving iteration speed.
+Initialization takes longer due to internal bookkeeping.
 
 ```
-cpu cache:
-[ # # # # # # # a0 b0 c0 a1 b1 c1 # # # # # # # # # ]
-
-main memory:
-[ a0 b0 c0 a1 b1 c1 a2 b2 c2 a3 b3 c3 a4 b4 c4 a5 b5 c5 a6 b6 c6 ]
+Main duration:  1.4699925s
 ```
 
-Here you can see that all of the *0th* fields are already in memory and ready for CPU access.
+### move_all – soa
+Structure of Arrays stores each field in its own dense array. This greatly improves
+cache efficiency when processing large batches.
+
+```
+Main duration:  994.106ms
+```
+
+### move_all – soa-simd
+Identical layout to SoA but processed using SIMD instructions, updating multiple
+values per CPU instruction. Fastest but least flexible.
+
+```
+Main duration:  614.2116ms
+```
+
+### Benchmark results table
+
+| Pattern       | Init duration | **Main duration** | Total duration  |
+|---------------|--------------:|------------------:|----------------:|
+| *Procedural*  | 196.4732ms    | 2.5489691s        | 2.7454423s      |
+| *ECS*         | 501.6176ms    | 1.4699925s        | 1.9716101s      |
+| *SoA*         | 198.7740ms    | 994.1060ms        | 1.1928800s      |
+| *SoA + SIMD*  | 196.6388ms    | 614.2116ms        | 810.8504ms      |
