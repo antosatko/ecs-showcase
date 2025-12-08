@@ -3,7 +3,7 @@
 This directory contains benchmarks of multiple design patterns including explanations for
 the results they generate. But to fully understand the results it is important to have
 some idea of how memory works. Here is a simplified explanation for
-[memory caching](./bevy-example/caching.md).
+[memory caching](./caching.md).
 
 
 ## Benchmark explanation
