@@ -72,10 +72,12 @@ system bMove(b: mut Position & Speed) {
 	b.Position += b.Speed
 }
 
+
+// Those two queries will never overlap
 system playerCollision(p: Player & Radius, mut b: EnemyRadius) {
 	if collisionC2C(p.Position, p.Radius, b.Position, b.Radius) {
 		rt.delete! b
-		batch rt.action! Player.Hit
+		batch rt.action! Player + Hit
 	}
 }
 
@@ -109,8 +111,8 @@ system addScore(resource score: mut Score, arg v: float) {
 
 system playerGotHisFav(
 	resource score: mut Score,
-	p: Player & mut FavouriteEnemy,
-	p.FavouriteEnemy as e: mut Radius & Position
+	p: Player & mut e=FavouriteEnemy,
+	join e: mut Radius & Position,       // p.FavouriteEnemy: mut Radius & Position
 ) {
 	if !collisionC2C(p.Position, p.Radius, e.Position, e.Radius) {
 		return;
