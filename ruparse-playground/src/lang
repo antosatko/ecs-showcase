@@ -1,4 +1,4 @@
-scheduler App {
+scheduler main {
     resources {
         
     }
@@ -7,3 +7,4 @@ scheduler App {
         init
     }
 }
+
