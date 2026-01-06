@@ -1,7 +1,7 @@
 use ruparse::Parser;
 use ruparse::api::ext::*;
 use ruparse::grammar::validator::Validator;
-use ruparse::grammar::{MatchToken, VarKind, VariableKind};
+use ruparse::grammar::{Comparison, MatchToken, VarKind, VariableKind};
 
 const IDENTIFIER: VarKind<'static> = local("identifier");
 const IDENTIFIER_VAR: (&'static str, VariableKind) = ("identifier", VariableKind::Node);
@@ -25,9 +25,7 @@ const KEYWORDS: &[&'static str] = &[
 ];
 
 fn keyword(kw: &'static str) -> MatchToken<'static> {
-    if !KEYWORDS.contains(&kw) {
-        panic!("{kw} is not a keyword");
-    }
+    assert!(KEYWORDS.contains(&kw), "{kw} must be a keyword");
     word(kw)
 }
 
@@ -35,14 +33,33 @@ pub fn gen_parser() -> Parser<'static> {
     let mut parser = Parser::new();
 
     parser.lexer.add_tokens(
-        "+ - * / ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , == != += -= *= /= %= && || >= <="
+        "+ - * / \\ ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , == != += -= *= /= %= && || >= <= #"
             .split_whitespace(),
     );
+    let escapes_characters_iter = "\\n \\t \\\" \\u \\\\".split_whitespace();
+    parser.lexer.add_tokens(escapes_characters_iter.clone());
+
+    // parser.lexer.preprocessors.push(|src, tokens| {
+    //     let mut iter = tokens.iter();
+    //     let mut result = Vec::new();
+
+    //     while let Some(token) = iter.next() {
+    //         result.push(token.clone());
+    //     }
+
+    //     Ok(result)
+    // });
 
     let keywords = parser
         .grammar
         .new_enum("keyword")
         .options(KEYWORDS.iter().map(|kw| word(kw)))
+        .build();
+
+    let escapes = parser
+        .grammar
+        .new_enum("escaped character")
+        .options(escapes_characters_iter.map(|kw| token(kw)))
         .build();
 
     let operators = parser
@@ -77,10 +94,63 @@ pub fn gen_parser() -> Parser<'static> {
         .variables([list_var("path")])
         .build();
 
+    let escaped_character = parser
+        .grammar
+        .new_node("escaped character")
+        .rules([is_one_of([
+            option(token("\\u")).commit().then([
+                is(token("{")),
+                is(text()).set(local("unicode")),
+                is(token("}")),
+            ]),
+            option(escapes).set(local("char")),
+        ])])
+        .variables([node_var("char"), node_var("unicode")])
+        .build();
+
+    let string_literal = {
+        let terminating_quote = option(token("\""))
+            .end()
+            .clone_value(local("delimeters count"), local("terminate delimeters"))
+            .then([loop_().then([
+                compare(
+                    local("zero"),
+                    local("terminate delimeters"),
+                    Comparison::Equal,
+                )
+                .then([return_node()]),
+                maybe(token("#"))
+                    .dec(local("terminate delimeters"))
+                    .otherwise([goto("main loop")]),
+            ])]);
+
+        parser
+            .grammar
+            .new_node("string literal")
+            .rules([
+                while_(token("#")).inc(local("delimeters count")),
+                is(token("\"")).commit().start(),
+                label("main loop"),
+                loop_().then([is_one_of([
+                    option(escaped_character.clone()).set(local("tokens")),
+                    terminating_quote,
+                    option(eof()).then([isnt(any()).hint("Possibly unclosed string literal")]),
+                    option(any()).set(local("tokens")),
+                ])]),
+            ])
+            .variables([
+                number_var("delimeters count"),
+                number_var("terminate delimeters"),
+                number_var("zero"),
+                list_var("tokens"),
+            ])
+            .build()
+    };
+
     let literals = parser
         .grammar
         .new_enum("literal")
-        .options([ident_path.clone()])
+        .options([ident_path.clone(), string_literal.clone()])
         .build();
 
     let value = parser
@@ -173,7 +243,9 @@ pub fn gen_parser() -> Parser<'static> {
             is(keyword("var")).commit(),
             is(ident.clone()).set(IDENTIFIER),
             maybe(token(":")).then([is(type_.clone()).set(local("type"))]),
-            maybe(token("=")).then([is(expression.clone()).set(local("expression"))]),
+            maybe(token("=")).then([is(expression.clone())
+                .set(local("expression"))
+                .hint("Variable must be initialized to a valid expression")]),
             is(end_stmt.clone()),
         ])
         .variables([IDENTIFIER_VAR, node_var("type"), node_var("expression")])
@@ -233,12 +305,12 @@ pub fn gen_parser() -> Parser<'static> {
         .grammar
         .new_enum("statement")
         .options([
-            expression_st.clone(),
             variable_st.clone(),
             return_st.clone(),
             continue_st.clone(),
             break_st.clone(),
             loop_st.clone(),
+            expression_st.clone(),
         ])
         .build();
 
@@ -316,8 +388,8 @@ pub fn gen_parser() -> Parser<'static> {
     parser.parser.entry = Some("entry");
 
     let valid_result = Validator::default().validate(&parser);
-    if !valid_result.success() {
-        valid_result.print_all().unwrap();
+    valid_result.print_all().unwrap();
+    if !valid_result.pass() {
         panic!();
     }
 

@@ -9,11 +9,16 @@ scheduler main {
 }
 
 function danda(abc: std::sfdg, asd: int): int {
-    abc = 8
+    abc = ##"  "#"  \u{66} "##
     var danda: eee = abc
     danda
     return sedm
     'outer: loop {
-        'a: loop {}
+        var danda = 8 == a
+        var danda = 8;
+        var danda = a  
+        'inner: loop{}
+        var danda = 8;
+    
     }
 }

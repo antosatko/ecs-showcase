@@ -8,9 +8,11 @@ fn main() {
     let parser = grammar::gen_parser();
 
     let tokens = parser.lexer.lex_utf8(TXT).unwrap();
+
     if false {
         println!("{tokens:?}");
     }
+
     let result = parser.parse(&tokens, TXT);
     match result {
         Ok(_result) => {
