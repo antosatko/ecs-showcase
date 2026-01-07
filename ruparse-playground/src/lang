@@ -10,7 +10,8 @@ scheduler main {
 
 function danda(abc: std::sfdg, asd: int): int {
     abc = ##"  "#"  \u{66} "##
-    var danda: eee = abc
+    var danda: eee = '\u{10}'; 'Není_to_perfektní_ale_aspoň_funguje_unicode'
+    var arr = [1, 2, 3, "sdf", #"danda"#, '\u{67}',]
     danda
     return sedm
     'outer: loop {

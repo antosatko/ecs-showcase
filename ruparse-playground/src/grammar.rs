@@ -1,7 +1,7 @@
 use ruparse::Parser;
 use ruparse::api::ext::*;
 use ruparse::grammar::validator::Validator;
-use ruparse::grammar::{Comparison, MatchToken, VarKind, VariableKind};
+use ruparse::grammar::{Comparison, ErrorDefinition, MatchToken, VarKind, VariableKind};
 
 const IDENTIFIER: VarKind<'static> = local("identifier");
 const IDENTIFIER_VAR: (&'static str, VariableKind) = ("identifier", VariableKind::Node);
@@ -24,6 +24,24 @@ const KEYWORDS: &[&'static str] = &[
     "continue",
 ];
 
+static _ERR: ErrorDefinition = ErrorDefinition {
+    header: "------",
+    code: "200",
+    msg: "-------------",
+};
+
+static UNCLOSED_STRING_LIT: ErrorDefinition = ErrorDefinition {
+    header: "Unclosed string",
+    code: "200",
+    msg: "Expected string literal to end before the end of file",
+};
+
+static EMPTY_CHAR_LIT: ErrorDefinition = ErrorDefinition {
+    header: "Empty character",
+    code: "200",
+    msg: "Expected character literal to not be empty",
+};
+
 fn keyword(kw: &'static str) -> MatchToken<'static> {
     assert!(KEYWORDS.contains(&kw), "{kw} must be a keyword");
     word(kw)
@@ -36,7 +54,7 @@ pub fn gen_parser() -> Parser<'static> {
         "+ - * / \\ ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , == != += -= *= /= %= && || >= <= #"
             .split_whitespace(),
     );
-    let escapes_characters_iter = "\\n \\t \\\" \\u \\\\".split_whitespace();
+    let escapes_characters_iter = "\\n \\t \\\" \\u \\\\ \\0".split_whitespace();
     parser.lexer.add_tokens(escapes_characters_iter.clone());
 
     // parser.lexer.preprocessors.push(|src, tokens| {
@@ -134,7 +152,7 @@ pub fn gen_parser() -> Parser<'static> {
                 loop_().then([is_one_of([
                     option(escaped_character.clone()).set(local("tokens")),
                     terminating_quote,
-                    option(eof()).then([isnt(any()).hint("Possibly unclosed string literal")]),
+                    option(eof()).fail(&UNCLOSED_STRING_LIT),
                     option(any()).set(local("tokens")),
                 ])]),
             ])
@@ -147,10 +165,48 @@ pub fn gen_parser() -> Parser<'static> {
             .build()
     };
 
+    let char_literal = parser
+        .grammar
+        .new_node("character literal")
+        .rules([
+            is(token("'")).commit(),
+            is_one_of([
+                option(escaped_character.clone()),
+                option(whitespace()),
+                option(token("'")).fail(&EMPTY_CHAR_LIT),
+                option(any()),
+            ])
+            .set(local("value")),
+            is(token("'")).hint("Only one character allowed in character literal"),
+        ])
+        .variables([node_var("value")])
+        .build();
+
+    let array_literal = parser
+        .grammar
+        .new_node("array literal")
+        .rules([
+            is(token("[")).commit(),
+            maybe(node("expression"))
+                .then([
+                    loop_().then([maybe(token(",")).then([maybe(node("expression"))
+                        .set(local("expressions"))
+                        .otherwise([is(token("]")).return_node()])])]),
+                ])
+                .otherwise([is(token("]"))]),
+        ])
+        .variables([list_var("expressions")])
+        .build();
+
     let literals = parser
         .grammar
         .new_enum("literal")
-        .options([ident_path.clone(), string_literal.clone()])
+        .options([
+            ident_path.clone(),
+            string_literal.clone(),
+            char_literal.clone(),
+            array_literal.clone(),
+        ])
         .build();
 
     let value = parser
