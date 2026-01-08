@@ -2,6 +2,8 @@ use ruparse::Parser;
 use ruparse::api::ext::*;
 use ruparse::grammar::validator::Validator;
 use ruparse::grammar::{Comparison, ErrorDefinition, MatchToken, VarKind, VariableKind};
+pub use ruparse::lexer::Token;
+use ruparse::lexer::{ControlTokenKind, PreprocessorError};
 
 const IDENTIFIER: VarKind<'static> = local("identifier");
 const IDENTIFIER_VAR: (&'static str, VariableKind) = ("identifier", VariableKind::Node);
@@ -38,13 +40,32 @@ static UNCLOSED_STRING_LIT: ErrorDefinition = ErrorDefinition {
 
 static EMPTY_CHAR_LIT: ErrorDefinition = ErrorDefinition {
     header: "Empty character",
-    code: "200",
+    code: "201",
     msg: "Expected character literal to not be empty",
+};
+
+static MULTIPLE_TRAILING_COMMAS: ErrorDefinition = ErrorDefinition {
+    header: "Multiple trailing commas",
+    code: "202",
+    msg: "Only one trailing comma allowed",
+};
+
+static EMPTY_INDEXING: ErrorDefinition = ErrorDefinition {
+    header: "Empty indexing",
+    code: "203",
+    msg: "Expected an expression to index with",
 };
 
 fn keyword(kw: &'static str) -> MatchToken<'static> {
     assert!(KEYWORDS.contains(&kw), "{kw} must be a keyword");
     word(kw)
+}
+
+fn is_numeric(str: &str) -> bool {
+    str.chars()
+        .nth(0)
+        .expect("Expected a non empty text")
+        .is_numeric()
 }
 
 pub fn gen_parser() -> Parser<'static> {
@@ -57,16 +78,89 @@ pub fn gen_parser() -> Parser<'static> {
     let escapes_characters_iter = "\\n \\t \\\" \\u \\\\ \\0".split_whitespace();
     parser.lexer.add_tokens(escapes_characters_iter.clone());
 
-    // parser.lexer.preprocessors.push(|src, tokens| {
-    //     let mut iter = tokens.iter();
-    //     let mut result = Vec::new();
+    parser.lexer.preprocessors.push(|src, tokens| {
+        use ruparse::lexer::TokenKinds;
+        let mut i = 0;
+        let mut result = Vec::new();
 
-    //     while let Some(token) = iter.next() {
-    //         result.push(token.clone());
-    //     }
+        while i < tokens.len() {
+            let tok = &tokens[i];
+            match &tok.kind {
+                // might be a comment
+                TokenKinds::Token(t) if t == "/" => {
+                    let start = i;
+                    if let Some(t) = tokens.get(i + 1)
+                        && t.kind == TokenKinds::Token("/".into())
+                    {
+                        if let Some(t) = tokens.get(i + 2)
+                            && t.kind == TokenKinds::Token("/".into())
+                        {
+                            // is a documentation comment
+                            while let Some(t) = tokens.get(i)
+                                && t.kind != TokenKinds::Control(ControlTokenKind::Eol)
+                            {
+                                i += 1;
+                            }
+                            let tok = Token {
+                                index: tokens[start].index,
+                                len: tokens[i].index - tokens[start].index,
+                                location: tokens[start].location,
+                                kind: TokenKinds::Complex("docstr".into()),
+                            };
+                            result.push(tok);
+                            continue;
+                        } else {
+                            // is a comment
+                            while let Some(t) = tokens.get(i)
+                                && t.kind != TokenKinds::Control(ControlTokenKind::Eol)
+                            {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                    result.push(tokens[i].clone());
+                }
+                TokenKinds::Text => {
+                    let numeric = is_numeric(tok.stringify(src));
+                    if !numeric {
+                        result.push(tok.clone());
+                        i += 1;
+                        continue;
+                    }
+                    if let Some(t) = tokens.get(i + 1)
+                        && t.kind == TokenKinds::Token(".".into())
+                    {
+                        if let Some(t) = tokens.get(i + 2)
+                            && t.kind == TokenKinds::Text
+                            && is_numeric(t.stringify(src))
+                        {
+                            let num = Token {
+                                index: tok.index,
+                                len: tok.len + 1 + t.len,
+                                location: tok.location,
+                                kind: TokenKinds::Complex("float".into()),
+                            };
+                            result.push(num);
+                            i += 3;
+                            continue;
+                        }
+                    }
+                    let num = Token {
+                        index: tok.index,
+                        len: tok.len,
+                        location: tok.location,
+                        kind: TokenKinds::Complex("numeric".into()),
+                    };
+                    result.push(num);
+                }
+                _ => result.push(tok.clone()),
+            }
+            i += 1;
+        }
 
-    //     Ok(result)
-    // });
+        Ok(result)
+    });
 
     let keywords = parser
         .grammar
@@ -88,6 +182,13 @@ pub fn gen_parser() -> Parser<'static> {
                 .split_whitespace()
                 .map(|t| token(t)),
         )
+        .build();
+
+    let docstr = parser
+        .grammar
+        .new_node("doc string")
+        .rules([while_(complex("docstr")).set(local("docstr"))])
+        .variables([list_var("docstr")])
         .build();
 
     let ident = parser
@@ -118,7 +219,7 @@ pub fn gen_parser() -> Parser<'static> {
         .rules([is_one_of([
             option(token("\\u")).commit().then([
                 is(token("{")),
-                is(text()).set(local("unicode")),
+                is(complex("numeric")).set(local("unicode")),
                 is(token("}")),
             ]),
             option(escapes).set(local("char")),
@@ -147,7 +248,7 @@ pub fn gen_parser() -> Parser<'static> {
             .new_node("string literal")
             .rules([
                 while_(token("#")).inc(local("delimeters count")),
-                is(token("\"")).commit().start(),
+                is(token("\"")).commit(),
                 label("main loop"),
                 loop_().then([is_one_of([
                     option(escaped_character.clone()).set(local("tokens")),
@@ -187,13 +288,13 @@ pub fn gen_parser() -> Parser<'static> {
         .new_node("array literal")
         .rules([
             is(token("[")).commit(),
-            maybe(node("expression"))
-                .then([
-                    loop_().then([maybe(token(",")).then([maybe(node("expression"))
-                        .set(local("expressions"))
-                        .otherwise([is(token("]")).return_node()])])]),
-                ])
-                .otherwise([is(token("]"))]),
+            loop_().then([
+                maybe(node("expression")).set(local("expressions")),
+                is_one_of([
+                    option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
+                    option(token("]")).return_node(),
+                ]),
+            ]),
         ])
         .variables([list_var("expressions")])
         .build();
@@ -204,16 +305,69 @@ pub fn gen_parser() -> Parser<'static> {
         .options([
             ident_path.clone(),
             string_literal.clone(),
+            complex("string"),
             char_literal.clone(),
             array_literal.clone(),
+            complex("numeric"),
+            complex("float"),
         ])
+        .build();
+
+    let field = parser
+        .grammar
+        .new_node("field access")
+        .rules([
+            is(token(".")).commit(),
+            is(ident.clone()).set(local("identifier")),
+        ])
+        .variables([node_var("identifier")])
+        .build();
+
+    let call = parser
+        .grammar
+        .new_node("call")
+        .rules([
+            is(token("(")).commit(),
+            loop_().then([
+                maybe(node("expression")).set(local("expressions")),
+                is_one_of([
+                    option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
+                    option(token(")")).return_node(),
+                ]),
+            ]),
+        ])
+        .variables([list_var("expressions")])
+        .build();
+
+    let indexing = parser
+        .grammar
+        .new_node("indexing")
+        .rules([
+            is(token("[")).commit(),
+            is_one_of([
+                option(token("]")).fail(&EMPTY_INDEXING),
+                option(node("expression")).set(local("index")),
+            ])
+            .hint("Must index with a valid expression"),
+            is(token("]")),
+        ])
+        .variables([node_var("index")])
+        .build();
+
+    let value_tails = parser
+        .grammar
+        .new_enum("value tail")
+        .options([field.clone(), call.clone(), indexing.clone()])
         .build();
 
     let value = parser
         .grammar
         .new_node("value")
-        .rules([is(literals.clone()).set(local("literal")).commit()])
-        .variables([node_var("literal")])
+        .rules([
+            is(literals.clone()).commit().set(local("literal")),
+            while_(value_tails.clone()).set(local("tail")),
+        ])
+        .variables([node_var("literal"), list_var("tail")])
         .build();
 
     let expression = parser
@@ -273,11 +427,13 @@ pub fn gen_parser() -> Parser<'static> {
         .new_node("parameters")
         .rules([
             is(token("(")).commit(),
-            maybe(parameter.clone()).then([while_(token(",")).then([is_one_of([
-                option(parameter.clone()).set(local("parameters")),
-                option(token(")")).return_node(),
-            ])])]),
-            is(token(")")),
+            loop_().then([
+                maybe(parameter.clone()).set(local("parameters")),
+                is_one_of([
+                    option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
+                    option(token(")")).return_node(),
+                ]),
+            ]),
         ])
         .variables([list_var("parameters")])
         .build();
@@ -373,6 +529,7 @@ pub fn gen_parser() -> Parser<'static> {
     let function = parser
         .grammar
         .new_node("function")
+        .has(docstr.clone(), "docs")
         .rules([
             is(keyword("function")).commit(),
             is(ident.clone()).set(IDENTIFIER),
@@ -415,6 +572,7 @@ pub fn gen_parser() -> Parser<'static> {
     let scheduler = parser
         .grammar
         .new_node("scheduler")
+        .has(docstr.clone(), "docs")
         .rules([
             is(keyword("scheduler")).commit(),
             is(ident.clone()).set(IDENTIFIER),
