@@ -1,9 +1,9 @@
 use ruparse::Parser;
 use ruparse::api::ext::*;
 use ruparse::grammar::validator::Validator;
-use ruparse::grammar::{Comparison, ErrorDefinition, MatchToken, VarKind, VariableKind};
+use ruparse::grammar::{ErrorDefinition, MatchToken, VarKind, VariableKind};
 pub use ruparse::lexer::Token;
-use ruparse::lexer::{ControlTokenKind, PreprocessorError};
+use ruparse::lexer::{ControlTokenKind, PreprocessorError, TokenKinds};
 
 const IDENTIFIER: VarKind<'static> = local("identifier");
 const IDENTIFIER_VAR: (&'static str, VariableKind) = ("identifier", VariableKind::Node);
@@ -56,6 +56,30 @@ static EMPTY_INDEXING: ErrorDefinition = ErrorDefinition {
     msg: "Expected an expression to index with",
 };
 
+static CHARACTER_OVERFLOW: ErrorDefinition = ErrorDefinition {
+    header: "Character overflow",
+    code: "204",
+    msg: "Expected character literal to contain a single character",
+};
+
+static UNCLOSED_CHAR_LIT: ErrorDefinition = ErrorDefinition {
+    header: "Unclosed character",
+    code: "205",
+    msg: "Unclosed character literal",
+};
+
+static UNKNOWN_CHARACTER: ErrorDefinition = ErrorDefinition {
+    header: "Unknown character",
+    code: "206",
+    msg: "Unknown character literal",
+};
+
+static EXPECTED_UNICODE: ErrorDefinition = ErrorDefinition {
+    header: "Expected Unicode",
+    code: "207",
+    msg: "Expected a unicode number in unicode escape sequence. Example: \u{0b0101}",
+};
+
 fn keyword(kw: &'static str) -> MatchToken<'static> {
     assert!(KEYWORDS.contains(&kw), "{kw} must be a keyword");
     word(kw)
@@ -68,6 +92,13 @@ fn is_numeric(str: &str) -> bool {
         .is_numeric()
 }
 
+fn count_hashes(tokens: &[Token]) -> usize {
+    tokens
+        .iter()
+        .take_while(|t| t.kind == TokenKinds::Token("#".into()))
+        .count()
+}
+
 pub fn gen_parser() -> Parser<'static> {
     let mut parser = Parser::new();
 
@@ -75,9 +106,8 @@ pub fn gen_parser() -> Parser<'static> {
         "+ - * / \\ ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , == != += -= *= /= %= && || >= <= #"
             .split_whitespace(),
     );
-    let escapes_characters_iter = "\\n \\t \\\" \\u \\\\ \\0".split_whitespace();
-    parser.lexer.add_tokens(escapes_characters_iter.clone());
-
+    // let escapes_characters_iter = "\\n \\t \\\" \\u \\\\ \\0".split_whitespace();
+    // parser.lexer.add_tokens(escapes_characters_iter.clone());
     parser.lexer.preprocessors.push(|src, tokens| {
         use ruparse::lexer::TokenKinds;
         let mut i = 0;
@@ -86,41 +116,6 @@ pub fn gen_parser() -> Parser<'static> {
         while i < tokens.len() {
             let tok = &tokens[i];
             match &tok.kind {
-                // might be a comment
-                TokenKinds::Token(t) if t == "/" => {
-                    let start = i;
-                    if let Some(t) = tokens.get(i + 1)
-                        && t.kind == TokenKinds::Token("/".into())
-                    {
-                        if let Some(t) = tokens.get(i + 2)
-                            && t.kind == TokenKinds::Token("/".into())
-                        {
-                            // is a documentation comment
-                            while let Some(t) = tokens.get(i)
-                                && t.kind != TokenKinds::Control(ControlTokenKind::Eol)
-                            {
-                                i += 1;
-                            }
-                            let tok = Token {
-                                index: tokens[start].index,
-                                len: tokens[i].index - tokens[start].index,
-                                location: tokens[start].location,
-                                kind: TokenKinds::Complex("docstr".into()),
-                            };
-                            result.push(tok);
-                            continue;
-                        } else {
-                            // is a comment
-                            while let Some(t) = tokens.get(i)
-                                && t.kind != TokenKinds::Control(ControlTokenKind::Eol)
-                            {
-                                i += 1;
-                            }
-                            continue;
-                        }
-                    }
-                    result.push(tokens[i].clone());
-                }
                 TokenKinds::Text => {
                     let numeric = is_numeric(tok.stringify(src));
                     if !numeric {
@@ -162,17 +157,252 @@ pub fn gen_parser() -> Parser<'static> {
         Ok(result)
     });
 
+    parser.lexer.preprocessors.push(|src, tokens| {
+        use ruparse::lexer::TokenKinds;
+        let mut i = 0;
+        let mut result = Vec::new();
+
+        'main: while i < tokens.len() {
+            let tok = &tokens[i];
+            match &tok.kind {
+                // might be a comment
+                TokenKinds::Token(t) if t == "/" => {
+                    let start = i;
+                    if let Some(t) = tokens.get(i + 1)
+                        && t.kind == TokenKinds::Token("/".into())
+                    {
+                        if let Some(t) = tokens.get(i + 2)
+                            && t.kind == TokenKinds::Token("/".into())
+                        {
+                            // is a documentation comment
+                            while let Some(t) = tokens.get(i)
+                                && t.kind != TokenKinds::Control(ControlTokenKind::Eol)
+                            {
+                                i += 1;
+                            }
+                            let tok = Token {
+                                index: tokens[start].index,
+                                len: tokens[i].index - tokens[start].index,
+                                location: tokens[start].location,
+                                kind: TokenKinds::Complex("docstr".into()),
+                            };
+                            result.push(tok);
+                            continue;
+                        } else {
+                            // is a comment
+                            while let Some(t) = tokens.get(i)
+                                && t.kind != TokenKinds::Control(ControlTokenKind::Eol)
+                            {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                    result.push(tokens[i].clone());
+                }
+                TokenKinds::Token(t) if t == "'" => match tokens.get(i + 1).map(|t| &t.kind) {
+                    Some(TokenKinds::Token(t)) if t == "\\" => {
+                        match tokens.get(i + 2).map(|t| t) {
+                            Some(t) => {
+                                let str = t.stringify(src);
+                                let literal = if "\"\\\'0abfnrtv".contains(str) {
+                                    // classic escapes
+                                    let tok = Token {
+                                        index: tok.index,
+                                        len: tokens[i + 2].len + 3,
+                                        location: tok.location,
+                                        kind: TokenKinds::Complex("char".into()),
+                                    };
+                                    i += 3;
+                                    tok
+                                } else if str == "u" {
+                                    // unicode
+                                    match (
+                                        tokens.get(i + 3).map(|t| &t.kind),
+                                        tokens.get(i + 4).map(|t| &t.kind),
+                                        tokens.get(i + 5).map(|t| &t.kind),
+                                    ) {
+                                        (
+                                            Some(TokenKinds::Token(open)),
+                                            Some(TokenKinds::Complex(code)),
+                                            Some(TokenKinds::Token(close)),
+                                        ) if open == "{" && code == "numeric" && close == "}" => {
+                                            let tok = Token {
+                                                index: tok.index,
+                                                len: tokens[i + 4].len + 5,
+                                                location: tok.location,
+                                                kind: TokenKinds::Complex("char".into()),
+                                            };
+                                            i += 6;
+                                            tok
+                                        }
+                                        (Some(TokenKinds::Token(op)), Some(_), _) if op == "{" => {
+                                            Err(PreprocessorError {
+                                                err: &EXPECTED_UNICODE,
+                                                location: tokens[i + 4].location,
+                                                len: tokens[i + 4].len,
+                                            })?
+                                        }
+                                        _ => Err(PreprocessorError {
+                                            err: &EXPECTED_UNICODE,
+                                            location: tokens[i + 2].location,
+                                            len: tokens[i + 2].len,
+                                        })?,
+                                    }
+                                } else {
+                                    // unknown
+                                    Err(PreprocessorError {
+                                        err: &UNKNOWN_CHARACTER,
+                                        location: tokens[i + 1].location,
+                                        len: t.len + 1,
+                                    })?
+                                };
+
+                                match tokens.get(i).map(|t| &t.kind) {
+                                    Some(TokenKinds::Token(t)) if t == "'" => {
+                                        result.push(literal);
+                                        i += 1;
+                                        continue;
+                                    }
+                                    _ => Err(PreprocessorError {
+                                        err: &UNCLOSED_CHAR_LIT,
+                                        location: tok.location,
+                                        len: t.len + 2,
+                                    })?,
+                                }
+                            }
+                            _ => Err(PreprocessorError {
+                                err: &UNCLOSED_CHAR_LIT,
+                                location: tok.location,
+                                len: tok.len + tokens[i + 1].len,
+                            })?,
+                        }
+                    }
+                    Some(TokenKinds::Text) => {
+                        let chars = tokens[i + 1].stringify(src).chars();
+                        if chars.count() > 1 {
+                            Err(PreprocessorError {
+                                err: &CHARACTER_OVERFLOW,
+                                location: tok.location,
+                                len: tok.len + tokens[i + 1].len,
+                            })?
+                        }
+                        match tokens.get(i + 2).map(|t| &t.kind) {
+                            Some(TokenKinds::Token(t)) if t == "'" => {
+                                let tok = Token {
+                                    index: tok.index,
+                                    len: tokens[i + 1].len + 2,
+                                    location: tok.location,
+                                    kind: TokenKinds::Complex("char".into()),
+                                };
+                                result.push(tok);
+                                i += 3;
+                                continue;
+                            }
+                            _ => Err(PreprocessorError {
+                                err: &UNCLOSED_CHAR_LIT,
+                                location: tok.location,
+                                len: tok.len + tokens[i + 1].len,
+                            })?,
+                        }
+                    }
+                    Some(TokenKinds::Token(t)) if t == "'" => Err(PreprocessorError {
+                        err: &EMPTY_CHAR_LIT,
+                        location: tok.location,
+                        len: 1,
+                    })?,
+                    Some(_) => Err(PreprocessorError {
+                        err: &UNKNOWN_CHARACTER,
+                        location: tokens[i + 1].location,
+                        len: tokens[i + 1].len,
+                    })?,
+                    None => Err(PreprocessorError {
+                        err: &UNCLOSED_CHAR_LIT,
+                        location: tok.location,
+                        len: 1,
+                    })?,
+                },
+                TokenKinds::Token(t) if t == "\"" => {
+                    let mut offset = 1;
+                    while let Some(token) = tokens.get(i + offset) {
+                        match &token.kind {
+                            TokenKinds::Token(t) if t == "\"" => {
+                                let token = Token {
+                                    index: tok.index,
+                                    len: token.index - tok.index + 1,
+                                    location: tok.location,
+                                    kind: TokenKinds::Complex("string".into()),
+                                };
+                                result.push(token);
+                                i += offset + 1;
+                                continue 'main;
+                            }
+                            TokenKinds::Token(t) if t == "\\" => offset += 2,
+                            _ => offset += 1,
+                        }
+                    }
+                    Err(PreprocessorError {
+                        err: &UNCLOSED_STRING_LIT,
+                        location: tok.location,
+                        len: tok.len,
+                    })?
+                }
+                TokenKinds::Token(t) if t == "#" => {
+                    let count = count_hashes(&tokens[i..]);
+                    if let Some(t) = tokens.get(i + count)
+                        && t.kind == TokenKinds::Token("\"".into())
+                    {
+                        let mut offset = count;
+                        while let Some(token) = tokens.get(i + offset) {
+                            match &token.kind {
+                                TokenKinds::Token(t) if t == "\"" => {
+                                    if count_hashes(&tokens[i + offset + 1..]) < count {
+                                        i += 1;
+                                        continue;
+                                    }
+                                    offset += count;
+                                    let token = Token {
+                                        index: tok.index,
+                                        len: tokens[i + offset].index - tok.index + 1,
+                                        location: tok.location,
+                                        kind: TokenKinds::Complex("string".into()),
+                                    };
+                                    result.push(token);
+                                    i += offset + 1;
+                                    continue 'main;
+                                }
+                                TokenKinds::Token(t) if t == "\\" => offset += 2,
+                                _ => offset += 1,
+                            }
+                        }
+                        Err(PreprocessorError {
+                            err: &UNCLOSED_STRING_LIT,
+                            location: tok.location,
+                            len: tok.len,
+                        })?
+                    }
+                    result.push(tok.clone());
+                }
+                // TokenKinds::Whitespace => (),
+                _ => result.push(tok.clone()),
+            }
+            i += 1;
+        }
+
+        Ok(result)
+    });
+
     let keywords = parser
         .grammar
         .new_enum("keyword")
         .options(KEYWORDS.iter().map(|kw| word(kw)))
         .build();
 
-    let escapes = parser
-        .grammar
-        .new_enum("escaped character")
-        .options(escapes_characters_iter.map(|kw| token(kw)))
-        .build();
+    // let escapes = parser
+    //     .grammar
+    //     .new_enum("escaped character")
+    //     .options(escapes_characters_iter.map(|kw| token(kw)))
+    //     .build();
 
     let operators = parser
         .grammar
@@ -213,76 +443,6 @@ pub fn gen_parser() -> Parser<'static> {
         .variables([list_var("path")])
         .build();
 
-    let escaped_character = parser
-        .grammar
-        .new_node("escaped character")
-        .rules([is_one_of([
-            option(token("\\u")).commit().then([
-                is(token("{")),
-                is(complex("numeric")).set(local("unicode")),
-                is(token("}")),
-            ]),
-            option(escapes).set(local("char")),
-        ])])
-        .variables([node_var("char"), node_var("unicode")])
-        .build();
-
-    let string_literal = {
-        let terminating_quote = option(token("\""))
-            .end()
-            .clone_value(local("delimeters count"), local("terminate delimeters"))
-            .then([loop_().then([
-                compare(
-                    local("zero"),
-                    local("terminate delimeters"),
-                    Comparison::Equal,
-                )
-                .then([return_node()]),
-                maybe(token("#"))
-                    .dec(local("terminate delimeters"))
-                    .otherwise([goto("main loop")]),
-            ])]);
-
-        parser
-            .grammar
-            .new_node("string literal")
-            .rules([
-                while_(token("#")).inc(local("delimeters count")),
-                is(token("\"")).commit(),
-                label("main loop"),
-                loop_().then([is_one_of([
-                    option(escaped_character.clone()).set(local("tokens")),
-                    terminating_quote,
-                    option(eof()).fail(&UNCLOSED_STRING_LIT),
-                    option(any()).set(local("tokens")),
-                ])]),
-            ])
-            .variables([
-                number_var("delimeters count"),
-                number_var("terminate delimeters"),
-                number_var("zero"),
-                list_var("tokens"),
-            ])
-            .build()
-    };
-
-    let char_literal = parser
-        .grammar
-        .new_node("character literal")
-        .rules([
-            is(token("'")).commit(),
-            is_one_of([
-                option(escaped_character.clone()),
-                option(whitespace()),
-                option(token("'")).fail(&EMPTY_CHAR_LIT),
-                option(any()),
-            ])
-            .set(local("value")),
-            is(token("'")).hint("Only one character allowed in character literal"),
-        ])
-        .variables([node_var("value")])
-        .build();
-
     let array_literal = parser
         .grammar
         .new_node("array literal")
@@ -304,9 +464,8 @@ pub fn gen_parser() -> Parser<'static> {
         .new_enum("literal")
         .options([
             ident_path.clone(),
-            string_literal.clone(),
             complex("string"),
-            char_literal.clone(),
+            complex("char"),
             array_literal.clone(),
             complex("numeric"),
             complex("float"),
@@ -403,11 +562,7 @@ pub fn gen_parser() -> Parser<'static> {
     let label = parser
         .grammar
         .new_node("label")
-        .rules([
-            is(token("'")),
-            is(ident.clone()).set(IDENTIFIER),
-            is(token(":")),
-        ])
+        .rules([is(ident.clone()).set(IDENTIFIER), is(token(":"))])
         .variables([IDENTIFIER_VAR])
         .build();
 
@@ -603,9 +758,7 @@ pub fn gen_parser() -> Parser<'static> {
 
     let valid_result = Validator::default().validate(&parser);
     valid_result.print_all().unwrap();
-    if !valid_result.pass() {
-        panic!();
-    }
+    assert!(valid_result.pass());
 
     parser
 }

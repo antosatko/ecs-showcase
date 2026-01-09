@@ -7,7 +7,13 @@ const TXT: &'static str = include_str!("lang");
 fn main() {
     let parser = grammar::gen_parser();
 
-    let tokens = parser.lexer.lex_utf8(TXT).unwrap();
+    let tokens = match parser.lexer.lex_utf8(TXT) {
+        Ok(r) => r,
+        Err(err) => {
+            err.print(TXT, Some("./src/lang")).unwrap();
+            return;
+        }
+    };
 
     if false {
         println!("{tokens:?}");

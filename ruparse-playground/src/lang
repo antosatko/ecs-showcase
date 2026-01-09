@@ -14,15 +14,16 @@ scheduler main {
 /// multiline documentation :)
 function danda(abc: std::sfdg, asd: int,): int {
     abc = ##"  "#"  \u{66} "##
-    var danda: eee = '\u{10}'; 'Není_to_perfektní_ale_aspoň_funguje_unicode'
-    var arr = [1, 2, 3, "sdf", #"danda"#, '\u{67}',]
-    danda.dfgsd(ad, "sdfs")[8.9]
+    var danda: eee = '\t'
+    
+    var arr = [1, 2, 3, '\u{67}', #"danmda\"#  f "#]
+    danda.dfgsd(ad)[8.9]
     return sedm
-    'outer: loop {
+    outer: loop {
         // var danda = 8 == a
         var danda = 8;
         var danda = a  
-        'inner: loop{}
+        inner: loop{}
         var danda = 8;
     
     }
