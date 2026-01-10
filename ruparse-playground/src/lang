@@ -1,7 +1,11 @@
+// This file is a dev playground for the parser
+// for resources on this language look elsewhere
+
+
 /// Main scheduler
 scheduler main {
     resources {
-        danda::nevimcodal
+        danda::nevimcodal()
     }
 
     systems {
@@ -13,15 +17,15 @@ scheduler main {
 /// Documentation
 /// multiline documentation :)
 function danda(abc: std::sfdg, asd: int,): int {
-    abc = ##"  "#"  \u{66} "##
+    syadf = ##"  "#"  \u{66} "##
     var danda: eee = '\t'
     
     var arr = [1, 2, 3, '\u{67}', #"danmda\"#  f "#]
-    danda.dfgsd(ad)[8.9]
+    danda.dfgsd(ad,aa,)[0b101101]
     return sedm
     outer: loop {
-        // var danda = 8 == a
-        var danda = 8;
+        // bla bla bla
+        var danda = 8-
         var danda = a  
         inner: loop{}
         var danda = 8;
