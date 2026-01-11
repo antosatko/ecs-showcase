@@ -106,8 +106,6 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         "+ - * / \\ ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , == != += -= *= /= %= && || >= <= #"
             .split_whitespace(),
     );
-    // let escapes_characters_iter = "\\n \\t \\\" \\u \\\\ \\0".split_whitespace();
-    // parser.lexer.add_tokens(escapes_characters_iter);
     parser.lexer.preprocessors.push(|src, tokens| {
         use ruparse::lexer::TokenKinds;
         let mut i = 0;
@@ -232,7 +230,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                                         {
                                             let tok = Token {
                                                 index: tok.index,
-                                                len: tokens[i + 4].len + 5,
+                                                len: tokens[i + 4].len + 6,
                                                 location: tok.location,
                                                 kind: TokenKinds::Complex("char"),
                                             };
@@ -355,7 +353,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                     if let Some(t) = tokens.get(i + count)
                         && t.kind == TokenKinds::Token("\"")
                     {
-                        let mut offset = count;
+                        let mut offset = count + 1;
                         while let Some(token) = tokens.get(i + offset) {
                             match &token.kind {
                                 TokenKinds::Token(t) if *t == "\"" => {
@@ -446,19 +444,19 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(token("[")).commit(),
             loop_().then([
-                maybe(node("expression")).set(local("expressions")),
+                maybe(node("expression")).set(local("elements")),
                 is_one_of([
                     option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
                     option(token("]")).return_node(),
                 ]),
             ]),
         ])
-        .variables([list_var("expressions")])
+        .variables([list_var("elements")])
         .build();
 
-    let parenthesis_literal = parser
+    let tuple_literal = parser
         .grammar
-        .new_node("parenthesis literal")
+        .new_node("tuple literal")
         .rules([
             is(token("(")).commit(),
             loop_().then([
@@ -480,7 +478,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             complex("string"),
             complex("char"),
             array_literal,
-            parenthesis_literal,
+            tuple_literal,
             complex("numeric"),
             complex("float"),
         ])
@@ -661,7 +659,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             ])
             .hint("Potentially unclosed code block")]),
         ])
-        .variables([node_var("statements")])
+        .variables([list_var("statements")])
         .build();
 
     let loop_st = parser
@@ -715,7 +713,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(keyword("systems")).commit(),
             is(token("{")),
-            while_(ident).set(local("systems")),
+            while_(ident_path).set(local("systems")),
             is(token("}")),
         ])
         .variables([list_var("systems")])

@@ -1,24 +1,37 @@
+use std::fs::File;
+use std::io::Write;
+
 use cranelift::codegen::{Context, verify_function};
 use cranelift::jit::{JITBuilder, JITModule};
 use cranelift::module::default_libcall_names;
 use cranelift::module::{Linkage, Module};
+use cranelift::object::{ObjectBuilder, ObjectModule};
 use cranelift::prelude::*;
 
 use cranelift::codegen::ir::UserFuncName;
 
-pub struct IrGen {
+pub struct NativeGen {
     pub(crate) function_builder_ctx: FunctionBuilderContext,
     pub(crate) ctx: Context,
-    pub(crate) module: JITModule,
+    pub(crate) module: ObjectModule,
 }
 
-impl IrGen {
+impl NativeGen {
     pub fn new() -> Self {
-        let m = JITModule::new(JITBuilder::new(default_libcall_names()).unwrap());
+        let mut flag_builder = settings::builder();
+        flag_builder.set("is_pic", "true").unwrap();
+        let flags = settings::Flags::new(flag_builder);
+
+        let isa = cranelift::native::builder().unwrap().finish(flags).unwrap();
+
+        let builder = ObjectBuilder::new(isa, "main", default_libcall_names()).unwrap();
+
+        let module = ObjectModule::new(builder);
+
         Self {
             function_builder_ctx: FunctionBuilderContext::new(),
-            ctx: m.make_context(),
-            module: m,
+            ctx: module.make_context(),
+            module,
         }
     }
 
@@ -68,14 +81,14 @@ impl IrGen {
 
         self.module.define_function(f, &mut self.ctx).unwrap();
         self.ctx.clear();
-        self.module.finalize_definitions().unwrap();
+    }
 
-        unsafe {
-            let code = self.module.get_finalized_function(f);
-            let func = std::mem::transmute::<_, fn(i32) -> i32>(code);
-            println!("func(10) = {}", func(10));
-            println!("func(-10) = {}", func(-10));
-        }
+    pub fn emit_obj(self, path: &str) {
+        let object = self.module.finish();
+        let bytes = object.emit().unwrap();
+
+        let mut file = File::create(path).unwrap();
+        file.write_all(&bytes).unwrap();
     }
 }
 pub fn params(p: impl IntoIterator<Item = Type>) -> Vec<AbiParam> {

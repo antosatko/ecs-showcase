@@ -1,6 +1,12 @@
 use std::path::PathBuf;
 
+use ruparse::parser::Nodes;
+
+use crate::ir::{Module, Object};
+
 mod grammar;
+mod ir;
+mod ruparse_lowering;
 
 const TXT: &'static str = include_str!("lang");
 
@@ -21,8 +27,32 @@ fn main() {
 
     let result = parser.parse(&tokens, TXT);
     match result {
-        Ok(_result) => {
-            println!("allgood");
+        Ok(result) => {
+            let module = Module::named("lang", TXT, &Nodes::Node(result.entry));
+
+            for symbol in module.symbols {
+                println!("symbol: {symbol:?}");
+            }
+
+            for fun in module.objects.iter() {
+                if let Object::Function {
+                    ident,
+                    parameters,
+                    return_type,
+                    body,
+                    docs,
+                } = &fun.inner
+                {
+                    println!();
+                    for doc in docs {
+                        println!("{}", doc.inner);
+                    }
+                    println!("function {}", **ident);
+                    println!("param count: {}", parameters.len());
+                    println!("has return type: {}", return_type.is_some());
+                    println!("body len: {}", body.inner.statements.len());
+                }
+            }
         }
         Err(err) => {
             err.print(TXT, PathBuf::from("./src/lang").to_str())

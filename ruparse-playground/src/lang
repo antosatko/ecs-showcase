@@ -17,18 +17,31 @@ scheduler main {
 /// Documentation
 /// multiline documentation :)
 function danda(abc: std::sfdg, asd: int,): int {
-    syadf = ##"  "#"  \u{66} "##
+    syadf = ##"  "#"  \u{67} "##
     var danda: eee = '\t'
     
-    var arr = [1, 2, 3, '\u{67}', #"danmda\"#  f "#]
+    var arr = [1, 2, 3, '\u{1222}', #"danmda\"#  f "#]
     danda.dfgsd(ad,aa,)[0b101101]
     return sedm
     outer: loop {
         // bla bla bla
-        var danda = 8-
+        var danda = 6.7f32
         var danda = a  
         inner: loop{}
         var danda = 8;
     
     }
+}
+
+function test_strings() {
+    var normal = "hello world";
+    var escaped = "hello\tworld\n\"quoted\"";
+    var empty = "";
+    var single_char = 'a';
+    var escaped_char = '\n';
+    var unicode_char = '\u{600}';
+    var raw_single_hash = #"raw string with \"inner quote\" and \no escape"#;
+    var raw_multi_hash = ##"raw with #\"inner\"# and more ##"##;
+    var raw_with_hashes = ###"### inner hashes ###"###;
+    return normal;
 }

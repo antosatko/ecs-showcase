@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 ruparse = {path = "../../mylibs/ruparse"}
+arena ={ path = "../../mylibs/arena"}
+smol_str = "0.3.5"
