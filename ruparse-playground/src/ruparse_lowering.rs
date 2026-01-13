@@ -5,7 +5,8 @@ use ruparse::parser::Nodes;
 use smol_str::SmolStr;
 
 use crate::ir::{
-    Module, Object, Source, char_literal, float_literal, numeric_literal, string_literal,
+    Associativity, ExprItem, Function, Module, Object, Source, char_literal, numeric_literal,
+    string_literal,
 };
 
 impl<'a> From<Nodes<'a>> for Module {
@@ -18,6 +19,7 @@ impl Module {
     pub fn named(name: impl Into<SmolStr>, src: &str, node: &Nodes) -> Self {
         let mut this = Self {
             name: name.into(),
+            docs: docstrings(src, node),
             objects: Arena::new(),
             symbols: HashMap::new(),
         };
@@ -27,6 +29,7 @@ impl Module {
             .for_each(|s| match s.get_name() {
                 "scheduler" => {
                     let ident = expect_ident(src, s);
+                    let docs = docstrings(src, s);
                     let mut resources = Vec::new();
                     let mut systems = Vec::new();
                     if let Some(res) = s.try_get_node("resources").as_ref() {
@@ -43,6 +46,7 @@ impl Module {
                         ident: ident.clone(),
                         resources,
                         systems,
+                        docs,
                     };
                     let key = this.objects.push(Source::new(obj, s.location()));
                     this.symbols.insert(ident.inner, key);
@@ -58,13 +62,13 @@ impl Module {
 
                     let docs = docstrings(src, s);
 
-                    let obj = Object::Function {
+                    let obj = Object::Function(Function {
                         ident: ident.clone(),
                         parameters: params,
                         return_type,
                         body,
                         docs,
-                    };
+                    });
 
                     let key = this.objects.push(Source::new(obj, s.location()));
                     this.symbols.insert(ident.inner, key);
@@ -76,6 +80,7 @@ impl Module {
     }
 }
 
+#[track_caller]
 pub fn ident(src: &str, node: &Nodes) -> Option<Source<SmolStr>> {
     node.try_get_node("identifier").as_ref().map(|t| {
         Source::new(
@@ -85,20 +90,19 @@ pub fn ident(src: &str, node: &Nodes) -> Option<Source<SmolStr>> {
     })
 }
 
+#[track_caller]
 pub fn expect_ident(src: &str, node: &Nodes) -> Source<SmolStr> {
     let t = node.expect_node("identifier");
     match t {
         Nodes::Node(n) => {
-            // Node containing the identifier token
-            let tok = n.try_get_node("identifier").as_ref().unwrap(); // now safe
+            let tok = n.try_get_node("identifier").as_ref().unwrap();
             Source::new(tok.stringify(src).into(), tok.location())
         }
-        Nodes::Token(tok) => {
-            // The identifier is directly a token
-            Source::new(tok.stringify(src).into(), tok.location)
-        }
+        Nodes::Token(tok) => Source::new(tok.stringify(src).into(), tok.location),
     }
 }
+
+#[track_caller]
 fn ident_path(src: &str, node: &Nodes) -> Source<crate::ir::IdentifierPath> {
     let path = node
         .get_list("path")
@@ -154,6 +158,7 @@ fn literal(src: &str, node: &Nodes) -> Source<crate::ir::Literal> {
         },
     }
 }
+
 fn value(src: &str, node: &Nodes) -> Source<crate::ir::Value> {
     let literal = literal(src, node.expect_node("literal"));
 
@@ -165,6 +170,7 @@ fn value(src: &str, node: &Nodes) -> Source<crate::ir::Value> {
         node.location(),
     )
 }
+
 fn ty(src: &str, node: &Nodes) -> Source<crate::ir::Type> {
     let path = ident_path(src, node.expect_node("path"));
     Source::new(crate::ir::Type { path }, node.location())
@@ -182,6 +188,7 @@ fn parameters(src: &str, node: &Nodes) -> Vec<Source<crate::ir::Parameter>> {
         .map(|p| parameter(src, p))
         .collect()
 }
+
 #[track_caller]
 fn docstrings(src: &str, node: &Nodes) -> Vec<Source<SmolStr>> {
     node.expect_node("docs")
@@ -255,31 +262,93 @@ fn block(src: &str, node: &Nodes) -> Source<crate::ir::Block> {
 
     Source::new(crate::ir::Block { statements }, node.location())
 }
+
 fn expression(src: &str, node: &Nodes) -> Source<crate::ir::Expression> {
+    let items = expression_items(src, node);
+    let mut pos = 0;
+    parse_expression_prec(&items, &mut pos, 0)
+}
+
+fn parse_expression_prec(
+    items: &[Source<ExprItem>],
+    pos: &mut usize,
+    min_prec: u8,
+) -> Source<crate::ir::Expression> {
+    let mut lhs = match &items[*pos].inner {
+        ExprItem::Value(expr) => {
+            let src = &items[*pos];
+            *pos += 1;
+            Source::new(expr.clone(), src.location)
+        }
+        _ => unreachable!("expression must start with value"),
+    };
+
+    while *pos < items.len() {
+        let op_item = &items[*pos];
+        let op = match &op_item.inner {
+            ExprItem::Operator(op) => *op,
+            _ => break,
+        };
+
+        let prec = op.precedence();
+        if prec < min_prec {
+            break;
+        }
+
+        *pos += 1;
+
+        let next_min_prec = match op.associativity() {
+            Associativity::Left => prec + 1,
+            Associativity::Right => prec,
+        };
+
+        let rhs = parse_expression_prec(items, pos, next_min_prec);
+        let lhs_loc = lhs.location;
+
+        lhs = Source::new(
+            crate::ir::Expression::Binary {
+                l: lhs.map(Box::new),
+                r: rhs.map(Box::new),
+                op: Source::new(op, op_item.location),
+            },
+            lhs_loc,
+        );
+    }
+
+    lhs
+}
+
+fn expression_items(src: &str, node: &Nodes) -> Vec<Source<ExprItem>> {
+    let mut items = Vec::new();
+
     let lvalue_node = node.expect_node("lvalue");
     let lvalue = value(src, &lvalue_node);
 
-    if let Some(op_node) = node.try_get_node("operator").as_ref() {
-        let rvalue_node = node.expect_node("rvalue");
-        let rvalue = expression(src, &rvalue_node).map(Box::new);
-        let op = operator(src, &op_node);
+    items.push(Source::new(
+        ExprItem::Value(crate::ir::Expression::Value(lvalue.inner)),
+        lvalue.location,
+    ));
 
-        Source::new(
-            crate::ir::Expression::Binary {
-                l: Source::new(
-                    Box::new(crate::ir::Expression::Value(lvalue.inner)),
-                    lvalue.location,
-                ),
-                r: rvalue,
-                op,
-            },
-            node.location(),
-        )
-    } else {
-        // Simple value
-        Source::new(crate::ir::Expression::Value(lvalue.inner), lvalue.location)
+    for entry in node.get_list("rest") {
+        match entry {
+            Nodes::Token(_) => {
+                let op = operator(src, entry);
+                items.push(Source::new(ExprItem::Operator(op.inner), op.location));
+            }
+
+            Nodes::Node(_) => {
+                let v = value(src, entry);
+                items.push(Source::new(
+                    ExprItem::Value(crate::ir::Expression::Value(v.inner)),
+                    v.location,
+                ));
+            }
+        }
     }
+
+    items
 }
+
 fn operator(src: &str, node: &Nodes) -> Source<crate::ir::Operator> {
     let op = match node.stringify(src) {
         "+" => crate::ir::Operator::Add,

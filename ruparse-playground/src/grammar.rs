@@ -186,6 +186,24 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                             };
                             result.push(tok);
                             continue;
+                        }
+                        if let Some(t) = tokens.get(i + 2)
+                            && t.kind == TokenKinds::Token("!")
+                        {
+                            // is a top level documentation comment
+                            while let Some(t) = tokens.get(i)
+                                && t.kind != TokenKinds::Control(ControlTokenKind::Eol)
+                            {
+                                i += 1;
+                            }
+                            let tok = Token {
+                                index: tokens[start].index,
+                                len: tokens[i].index - tokens[start].index,
+                                location: tokens[start].location,
+                                kind: TokenKinds::Complex("tl docstr"),
+                            };
+                            result.push(tok);
+                            continue;
                         } else {
                             // is a comment
                             while let Some(t) = tokens.get(i)
@@ -416,6 +434,13 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .variables([list_var("docstr")])
         .build();
 
+    let tl_docstr = parser
+        .grammar
+        .new_node("top level doc string")
+        .rules([while_(complex("tl docstr")).set(local("docstr"))])
+        .variables([list_var("docstr")])
+        .build();
+
     let ident = parser
         .grammar
         .new_node("identifier")
@@ -538,18 +563,30 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .variables([node_var("literal"), list_var("tail")])
         .build();
 
+    // let expression = parser
+    //     .grammar
+    //     .new_node("expression")
+    //     .rules([
+    //         is(value).set(local("lvalue")).commit(),
+    //         maybe(operators)
+    //             .set(local("operator"))
+    //             .then([is(node("expression"))
+    //                 .set(local("rvalue"))
+    //                 .hint("Binary operator must contain right value")]),
+    //     ])
+    //     .variables([node_var("lvalue"), node_var("operator"), node_var("rvalue")])
+    //     .build();
+
     let expression = parser
         .grammar
         .new_node("expression")
         .rules([
             is(value).set(local("lvalue")).commit(),
-            maybe(operators)
-                .set(local("operator"))
-                .then([is(node("expression"))
-                    .set(local("rvalue"))
-                    .hint("Binary operator must contain right value")]),
+            while_(operators).set(local("rest")).then([is(value)
+                .set(local("rest"))
+                .hint("Binary operator must contain right value")]),
         ])
-        .variables([node_var("lvalue"), node_var("operator"), node_var("rvalue")])
+        .variables([node_var("lvalue"), list_var("rest")])
         .build();
 
     let end_stmt = parser
@@ -759,6 +796,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     parser
         .grammar
         .new_node("entry")
+        .has(tl_docstr, "docs")
         .rules([loop_().then([is_one_of([
             option(tls).set(local("top level statements")),
             option(eof()).return_node(),

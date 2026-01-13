@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 cranelift = { version = "0.127.1", features = ["interpreter", "jit", "module", "native", "object"] }
+ruparse-playground = {path = "../ruparse-playground"}
+smol_str = "0.3.5"

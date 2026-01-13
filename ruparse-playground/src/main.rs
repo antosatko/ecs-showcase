@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ruparse::parser::Nodes;
 
-use crate::ir::{Module, Object};
+use crate::ir::{Function, Module, Object};
 
 mod grammar;
 mod ir;
@@ -30,24 +30,30 @@ fn main() {
         Ok(result) => {
             let module = Module::named("lang", TXT, &Nodes::Node(result.entry));
 
+            println!();
+            for doc in module.docs {
+                println!("{}", doc.inner);
+            }
+            println!("IR for module {}", module.name);
+
             for symbol in module.symbols {
                 println!("symbol: {symbol:?}");
             }
 
             for fun in module.objects.iter() {
-                if let Object::Function {
+                if let Object::Function(Function {
                     ident,
                     parameters,
                     return_type,
                     body,
                     docs,
-                } = &fun.inner
+                }) = &fun.inner
                 {
                     println!();
                     for doc in docs {
                         println!("{}", doc.inner);
                     }
-                    println!("function {}", **ident);
+                    println!("function {}", ident.inner);
                     println!("param count: {}", parameters.len());
                     println!("has return type: {}", return_type.is_some());
                     println!("body len: {}", body.inner.statements.len());

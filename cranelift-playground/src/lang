@@ -1,0 +1,13 @@
+function main(): int {
+	var a = 5
+	return 7 + 10 * 5
+}
+
+
+function two(): int {
+	loop {
+		var a = 5
+		break
+	}
+	return 6
+}

@@ -45,36 +45,45 @@ impl<T> DerefMut for Source<T> {
 #[derive(Debug, Copy, Clone)]
 pub struct ObjectTag;
 
+#[derive(Debug, Clone)]
 pub struct Module {
     pub name: SmolStr,
+    pub docs: Vec<Source<SmolStr>>,
     pub objects: Arena<Source<Object>, ObjectTag>,
     pub symbols: HashMap<SmolStr, Key<ObjectTag>>,
 }
 
 /* ===================== OBJECTS ===================== */
 
+#[derive(Debug, Clone)]
 pub enum Object {
     Scheduler {
         ident: Source<SmolStr>,
         resources: Vec<Source<Value>>,
         systems: Vec<Source<IdentifierPath>>,
-    },
-
-    Function {
-        ident: Source<SmolStr>,
-        parameters: Vec<Source<Parameter>>,
-        return_type: Option<Source<Type>>,
-        body: Source<Block>,
         docs: Vec<Source<SmolStr>>,
     },
+
+    Function(Function),
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub ident: Source<SmolStr>,
+    pub parameters: Vec<Source<Parameter>>,
+    pub return_type: Option<Source<Type>>,
+    pub body: Source<Block>,
+    pub docs: Vec<Source<SmolStr>>,
 }
 
 /* ===================== BLOCK / STATEMENTS ===================== */
 
+#[derive(Debug, Clone)]
 pub struct Block {
     pub statements: Vec<Source<Statement>>,
 }
 
+#[derive(Debug, Clone)]
 pub enum Statement {
     Var {
         ident: Source<SmolStr>,
@@ -101,6 +110,7 @@ pub enum Statement {
 
 /* ===================== PARAMETERS ===================== */
 
+#[derive(Debug, Clone)]
 pub struct Parameter {
     pub ident: Source<SmolStr>,
     pub ty: Source<Type>,
@@ -108,6 +118,8 @@ pub struct Parameter {
 
 /* ===================== EXPRESSIONS ===================== */
 
+#[derive(Debug, Clone)]
+// #[derive(Debug)]
 pub enum Expression {
     Value(Value),
 
@@ -120,6 +132,8 @@ pub enum Expression {
 
 /* ===================== OPERATORS ===================== */
 
+#[derive(Debug, Clone, Copy)]
+// #[derive(Debug)]
 pub enum Operator {
     Add,
     Sub,
@@ -147,11 +161,15 @@ pub enum Operator {
 
 /* ===================== VALUES ===================== */
 
+// #[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Value {
     pub literal: Source<Literal>,
     pub postfix: Vec<Source<Postfix>>,
 }
 
+#[derive(Debug, Clone)]
+// #[derive(Debug)]
 pub enum Postfix {
     Field(Source<SmolStr>),
     Call(Vec<Source<Expression>>),
@@ -160,18 +178,23 @@ pub enum Postfix {
 
 /* ===================== TYPES ===================== */
 
+#[derive(Debug, Clone)]
 pub struct Type {
     pub path: Source<IdentifierPath>,
 }
 
 /* ===================== IDENTIFIERS ===================== */
 
+// #[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IdentifierPath {
     pub path: Vec<Source<SmolStr>>,
 }
 
 /* ===================== LITERALS ===================== */
 
+// #[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Identifier(IdentifierPath),
 
@@ -185,13 +208,17 @@ pub enum Literal {
 }
 
 /* ===================== NUMBERS ===================== */
-#[derive(Debug)]
+
+// #[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Number {
     pub value: NumberValue,
     pub size: Option<u32>,
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
+
+#[derive(Debug, Clone)]
 pub enum NumberValue {
     Float(f64),
     Uint(u128),
@@ -268,8 +295,54 @@ pub fn char_literal(s: &str) -> char {
     }
 }
 pub fn string_literal(s: &str) -> SmolStr {
-    // Count starting hashes
     let start_hashes = s.chars().take_while(|&c| c == '#').count();
-    let content = &s[start_hashes + 1..s.len() - (start_hashes + 1)]; // crude, but works
+    let content = &s[start_hashes + 1..s.len() - (start_hashes + 1)];
     content.into()
+}
+
+/* ================ PRECEDENCE ============ */
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum Associativity {
+    Left,
+    Right,
+}
+
+impl Operator {
+    pub fn precedence(self) -> u8 {
+        match self {
+            Operator::Mul | Operator::Div | Operator::Mod => 70,
+            Operator::Add | Operator::Sub => 60,
+
+            Operator::Gr | Operator::Le | Operator::GrEq | Operator::LeEq => 50,
+
+            Operator::Eq | Operator::NEq => 45,
+            Operator::And => 30,
+            Operator::Or => 20,
+
+            Operator::Assign
+            | Operator::AddAssign
+            | Operator::SubAssign
+            | Operator::MulAssign
+            | Operator::DivAssign
+            | Operator::ModAssign => 10,
+        }
+    }
+
+    pub fn associativity(self) -> Associativity {
+        match self {
+            Operator::Assign
+            | Operator::AddAssign
+            | Operator::SubAssign
+            | Operator::MulAssign
+            | Operator::DivAssign
+            | Operator::ModAssign => Associativity::Right,
+            _ => Associativity::Left,
+        }
+    }
+}
+
+pub enum ExprItem {
+    Value(crate::ir::Expression),
+    Operator(Operator),
 }
