@@ -430,14 +430,14 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let docstr = parser
         .grammar
         .new_node("doc string")
-        .rules([while_(complex("docstr")).set(local("docstr"))])
+        .rules([while_(complex("docstr")).set("docstr")])
         .variables([list_var("docstr")])
         .build();
 
     let tl_docstr = parser
         .grammar
         .new_node("top level doc string")
-        .rules([while_(complex("tl docstr")).set(local("docstr"))])
+        .rules([while_(complex("tl docstr")).set("docstr")])
         .variables([list_var("docstr")])
         .build();
 
@@ -455,9 +455,9 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .grammar
         .new_node("identifier path")
         .rules([
-            is(ident).set(local("path")).commit(),
+            is(ident).set("path").commit(),
             while_(token("::")).then([is(ident)
-                .set(local("path"))
+                .set("path")
                 .hint("Static path must end on an identifier")]),
         ])
         .variables([list_var("path")])
@@ -469,7 +469,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(token("[")).commit(),
             loop_().then([
-                maybe(node("expression")).set(local("elements")),
+                maybe(node("expression")).set("elements"),
                 is_one_of([
                     option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
                     option(token("]")).return_node(),
@@ -485,7 +485,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(token("(")).commit(),
             loop_().then([
-                maybe(node("expression")).set(local("expressions")),
+                maybe(node("expression")).set("expressions"),
                 is_one_of([
                     option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
                     option(token(")")).return_node(),
@@ -512,7 +512,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let field = parser
         .grammar
         .new_node("field access")
-        .rules([is(token(".")).commit(), is(ident).set(local("identifier"))])
+        .rules([is(token(".")), is(ident).commit().set("identifier")])
         .variables([node_var("identifier")])
         .build();
 
@@ -522,7 +522,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(token("(")).commit(),
             loop_().then([
-                maybe(node("expression")).set(local("expressions")),
+                maybe(node("expression")).set("expressions"),
                 is_one_of([
                     option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
                     option(token(")")).return_node(),
@@ -539,7 +539,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             is(token("[")).commit(),
             is_one_of([
                 option(token("]")).fail(&EMPTY_INDEXING),
-                option(node("expression")).set(local("index")),
+                option(node("expression")).set("index"),
             ])
             .hint("Must index with a valid expression"),
             is(token("]")),
@@ -547,43 +547,46 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .variables([node_var("index")])
         .build();
 
+    let ref_tokens = parser
+        .grammar
+        .new_enum("ref token")
+        .options([token("&"), token("&&"), token("*")])
+        .build();
+
+    let refs = parser
+        .grammar
+        .new_node("ref cast")
+        .rules([
+            is(token(".")),
+            is(ref_tokens).set("refs").commit(),
+            while_(ref_tokens).set("refs"),
+        ])
+        .variables([list_var("refs")])
+        .build();
+
     let value_tails = parser
         .grammar
         .new_enum("value tail")
-        .options([field, call, indexing])
+        .options([field, call, indexing, refs])
         .build();
 
     let value = parser
         .grammar
         .new_node("value")
         .rules([
-            is(literals).commit().set(local("literal")),
-            while_(value_tails).set(local("tail")),
+            is(literals).commit().set("literal"),
+            while_(value_tails).set("tail"),
         ])
         .variables([node_var("literal"), list_var("tail")])
         .build();
-
-    // let expression = parser
-    //     .grammar
-    //     .new_node("expression")
-    //     .rules([
-    //         is(value).set(local("lvalue")).commit(),
-    //         maybe(operators)
-    //             .set(local("operator"))
-    //             .then([is(node("expression"))
-    //                 .set(local("rvalue"))
-    //                 .hint("Binary operator must contain right value")]),
-    //     ])
-    //     .variables([node_var("lvalue"), node_var("operator"), node_var("rvalue")])
-    //     .build();
 
     let expression = parser
         .grammar
         .new_node("expression")
         .rules([
-            is(value).set(local("lvalue")).commit(),
-            while_(operators).set(local("rest")).then([is(value)
-                .set(local("rest"))
+            is(value).set("lvalue").commit(),
+            while_(operators).set("rest").then([is(value)
+                .set("rest")
                 .hint("Binary operator must contain right value")]),
         ])
         .variables([node_var("lvalue"), list_var("rest")])
@@ -599,7 +602,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let type_ = parser
         .grammar
         .new_node("type")
-        .rules([is(ident_path).commit().set(local("path"))])
+        .rules([is(ident_path).commit().set("path")])
         .variables([node_var("path")])
         .build();
 
@@ -614,9 +617,9 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .grammar
         .new_node("parameter")
         .rules([
-            is(ident).set(local("identifier")).commit(),
+            is(ident).set("identifier").commit(),
             is(token(":")),
-            is(type_).set(local("type")),
+            is(type_).set("type"),
         ])
         .variables([node_var("identifier"), node_var("type")])
         .build();
@@ -627,7 +630,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(token("(")).commit(),
             loop_().then([
-                maybe(parameter).set(local("parameters")),
+                maybe(parameter).set("parameters"),
                 is_one_of([
                     option(token(",")).then([maybe(token(",")).fail(&MULTIPLE_TRAILING_COMMAS)]),
                     option(token(")")).return_node(),
@@ -640,10 +643,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let expression_st = parser
         .grammar
         .new_node("expression statement")
-        .rules([
-            is(expression).set(local("expression")).commit(),
-            is(end_stmt),
-        ])
+        .rules([is(expression).set("expression").commit(), is(end_stmt)])
         .variables([node_var("expression")])
         .build();
 
@@ -653,9 +653,9 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(keyword("var")).commit(),
             is(ident).set(IDENTIFIER),
-            maybe(token(":")).then([is(type_).set(local("type"))]),
+            maybe(token(":")).then([is(type_).set("type")]),
             maybe(token("=")).then([is(expression)
-                .set(local("expression"))
+                .set("expression")
                 .hint("Variable must be initialized to a valid expression")]),
             is(end_stmt),
         ])
@@ -667,7 +667,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .new_node("return")
         .rules([
             is(keyword("return")).commit(),
-            is(expression).set(local("expression")),
+            is(expression).set("expression"),
             is(end_stmt),
         ])
         .variables([node_var("expression")])
@@ -676,12 +676,14 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let continue_st = parser
         .grammar
         .new_node("continue")
+        .maybe_has(label, "label")
         .rules([is(keyword("continue"))])
         .build();
 
     let break_st = parser
         .grammar
         .new_node("break")
+        .maybe_has(label, "label")
         .rules([is(keyword("break"))])
         .build();
 
@@ -691,7 +693,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(token("{")).commit(),
             loop_().then([is_one_of([
-                option(enumerator("statement")).set(local("statements")),
+                option(enumerator("statement")).set("statements"),
                 option(token("}")).return_node(),
             ])
             .hint("Potentially unclosed code block")]),
@@ -702,12 +704,64 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let loop_st = parser
         .grammar
         .new_node("loop")
+        .maybe_has(label, "label")
         .rules([
-            maybe(label).set(local("label")),
             is(keyword("loop")).commit(),
-            is(code_block).set(local("code block")),
+            is(code_block).set("code block"),
         ])
-        .variables([node_var("label"), node_var("code block")])
+        .variables([node_var("code block")])
+        .build();
+
+    let else_if_st = parser
+        .grammar
+        .new_node("else if")
+        .rules([
+            is(keyword("else")),
+            is(keyword("if")).commit(),
+            is(expression).set("expression"),
+            is(code_block).set("code block"),
+        ])
+        .variables([node_var("expression"), node_var("code block")])
+        .build();
+
+    let else_st = parser
+        .grammar
+        .new_node("else")
+        .rules([
+            is(keyword("else")).commit(),
+            is(code_block).set("code block"),
+        ])
+        .variables([node_var("code block")])
+        .build();
+
+    let if_st = parser
+        .grammar
+        .new_node("if")
+        .rules([
+            is(keyword("if")).commit(),
+            is(expression).set("expression"),
+            is(code_block).set("code block"),
+            while_(else_if_st).set("else if"),
+            maybe(else_st).set("else"),
+        ])
+        .variables([
+            node_var("expression"),
+            node_var("code block"),
+            list_var("else if"),
+            node_var("else"),
+        ])
+        .build();
+
+    let while_st = parser
+        .grammar
+        .new_node("while")
+        .maybe_has(label, "label")
+        .rules([
+            is(keyword("while")).commit(),
+            is(expression).set("expression"),
+            is(code_block).set("code block"),
+        ])
+        .variables([node_var("expression"), node_var("code block")])
         .build();
 
     // references
@@ -721,6 +775,8 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             continue_st,
             break_st,
             loop_st,
+            if_st,
+            while_st,
             expression_st,
         ])
         .build();
@@ -732,9 +788,9 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(keyword("function")).commit().start(),
             is(ident).set(IDENTIFIER),
-            is(parameter_list).set(local("parameters")),
-            maybe(token(":")).then([is(type_).set(local("return type"))]),
-            is(code_block).set(local("code block")),
+            is(parameter_list).set("parameters"),
+            maybe(token(":")).then([is(type_).set("return type")]),
+            is(code_block).set("code block"),
         ])
         .variables([
             IDENTIFIER_VAR,
@@ -750,7 +806,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(keyword("systems")).commit(),
             is(token("{")),
-            while_(ident_path).set(local("systems")),
+            while_(ident_path).set("systems"),
             is(token("}")),
         ])
         .variables([list_var("systems")])
@@ -763,7 +819,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             is(keyword("resources")).commit(),
             is(token("{")),
             loop_().then([is_one_of([
-                option(value).set(local("resources")),
+                option(value).set("resources"),
                 option(token("}")).return_node(),
             ])
             .hint("A list of simple values")]),
@@ -779,8 +835,8 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             is(keyword("scheduler")).commit().start(),
             is(ident).set(IDENTIFIER),
             is(token("{")),
-            maybe(resources).set(local("resources")),
-            maybe(systems).set(local("systems")),
+            maybe(resources).set("resources"),
+            maybe(systems).set("systems"),
             is(token("}"))
                 .hint("Scheduler must at most contain resources and systems in this order"),
         ])
@@ -798,7 +854,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .new_node("entry")
         .has(tl_docstr, "docs")
         .rules([loop_().then([is_one_of([
-            option(tls).set(local("top level statements")),
+            option(tls).set("top level statements"),
             option(eof()).return_node(),
         ])])])
         .variables([list_var("top level statements")])

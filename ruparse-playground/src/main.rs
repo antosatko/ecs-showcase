@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ruparse::parser::Nodes;
 
-use crate::ir::{Function, Module, Object};
+use crate::ruparse_lowering::module_named;
 
 mod grammar;
 mod ir;
@@ -28,7 +28,7 @@ fn main() {
     let result = parser.parse(&tokens, TXT);
     match result {
         Ok(result) => {
-            let module = Module::named("lang", TXT, &Nodes::Node(result.entry));
+            let module = module_named("lang", TXT, &Nodes::Node(result.entry));
 
             println!();
             for doc in module.docs {
@@ -41,7 +41,7 @@ fn main() {
             }
 
             for fun in module.objects.iter() {
-                if let Object::Function(Function {
+                if let lang_ir::ast::Object::Function(lang_ir::ast::Function {
                     ident,
                     parameters,
                     return_type,

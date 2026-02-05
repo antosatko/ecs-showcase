@@ -4,38 +4,43 @@ use std::{
 };
 
 use arena::{Arena, Key};
-use ruparse::lexer::TextLocation;
 use smol_str::SmolStr;
 
 /* ===================== SOURCE ===================== */
 
 #[derive(Debug, Clone)]
-pub struct Source<T> {
+pub struct Span<T> {
     pub inner: T,
-    pub location: TextLocation,
+    pub location: SpanIndex,
 }
 
-impl<T> Source<T> {
-    pub fn new(inner: T, location: TextLocation) -> Self {
+#[derive(Debug, Clone, Copy)]
+pub struct SpanIndex {
+    pub index: usize,
+    pub len: usize,
+}
+
+impl<T> Span<T> {
+    pub fn new(inner: T, location: SpanIndex) -> Self {
         Self { inner, location }
     }
 
-    pub fn map<U, F>(self, f: F) -> Source<U>
+    pub fn map<U, F>(self, f: F) -> Span<U>
     where
         F: FnOnce(T) -> U,
     {
-        Source::new(f(self.inner), self.location)
+        Span::new(f(self.inner), self.location)
     }
 }
 
-impl<T> Deref for Source<T> {
+impl<T> Deref for Span<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<T> DerefMut for Source<T> {
+impl<T> DerefMut for Span<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
@@ -48,8 +53,8 @@ pub struct ObjectTag;
 #[derive(Debug, Clone)]
 pub struct Module {
     pub name: SmolStr,
-    pub docs: Vec<Source<SmolStr>>,
-    pub objects: Arena<Source<Object>, ObjectTag>,
+    pub docs: Vec<Span<SmolStr>>,
+    pub objects: Arena<Span<Object>, ObjectTag>,
     pub symbols: HashMap<SmolStr, Key<ObjectTag>>,
 }
 
@@ -58,10 +63,10 @@ pub struct Module {
 #[derive(Debug, Clone)]
 pub enum Object {
     Scheduler {
-        ident: Source<SmolStr>,
-        resources: Vec<Source<Value>>,
-        systems: Vec<Source<IdentifierPath>>,
-        docs: Vec<Source<SmolStr>>,
+        ident: Span<SmolStr>,
+        resources: Vec<Span<Value>>,
+        systems: Vec<Span<IdentifierPath>>,
+        docs: Vec<Span<SmolStr>>,
     },
 
     Function(Function),
@@ -69,59 +74,59 @@ pub enum Object {
 
 #[derive(Debug, Clone)]
 pub struct Function {
-    pub ident: Source<SmolStr>,
-    pub parameters: Vec<Source<Parameter>>,
-    pub return_type: Option<Source<Type>>,
-    pub body: Source<Block>,
-    pub docs: Vec<Source<SmolStr>>,
+    pub ident: Span<SmolStr>,
+    pub parameters: Vec<Span<Parameter>>,
+    pub return_type: Option<Span<Type>>,
+    pub body: Span<Block>,
+    pub docs: Vec<Span<SmolStr>>,
 }
 
 /* ===================== BLOCK / STATEMENTS ===================== */
 
 #[derive(Debug, Clone)]
 pub struct Block {
-    pub statements: Vec<Source<Statement>>,
+    pub statements: Vec<Span<Statement>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Statement {
     Var {
-        ident: Source<SmolStr>,
-        ty: Option<Source<Type>>,
-        expression: Option<Source<Expression>>,
+        ident: Span<SmolStr>,
+        ty: Option<Span<Type>>,
+        expression: Option<Span<Expression>>,
     },
 
     Return {
-        expression: Source<Expression>,
+        expression: Span<Expression>,
     },
 
     Break {
-        label: Option<Source<SmolStr>>,
+        label: Option<Span<SmolStr>>,
     },
     Continue {
-        label: Option<Source<SmolStr>>,
+        label: Option<Span<SmolStr>>,
     },
 
     Loop {
-        label: Option<Source<SmolStr>>,
-        body: Source<Block>,
+        label: Option<Span<SmolStr>>,
+        body: Span<Block>,
     },
 
     Expr {
-        expression: Source<Expression>,
+        expression: Span<Expression>,
     },
 
     If {
-        condition: Source<Expression>,
-        then_block: Source<Block>,
-        else_if: Vec<(Source<Expression>, Source<Block>)>,
-        else_block: Option<Source<Block>>,
+        condition: Span<Expression>,
+        then_block: Span<Block>,
+        else_if: Vec<(Span<Expression>, Span<Block>)>,
+        else_block: Option<Span<Block>>,
     },
 
     While {
-        label: Option<Source<SmolStr>>,
-        condition: Source<Expression>,
-        body: Source<Block>,
+        label: Option<Span<SmolStr>>,
+        condition: Span<Expression>,
+        body: Span<Block>,
     },
 }
 
@@ -129,28 +134,26 @@ pub enum Statement {
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
-    pub ident: Source<SmolStr>,
-    pub ty: Source<Type>,
+    pub ident: Span<SmolStr>,
+    pub ty: Span<Type>,
 }
 
 /* ===================== EXPRESSIONS ===================== */
 
 #[derive(Debug, Clone)]
-// #[derive(Debug)]
 pub enum Expression {
     Value(Value),
 
     Binary {
-        l: Source<Box<Expression>>,
-        r: Source<Box<Expression>>,
-        op: Source<Operator>,
+        l: Span<Box<Expression>>,
+        r: Span<Box<Expression>>,
+        op: Span<Operator>,
     },
 }
 
 /* ===================== OPERATORS ===================== */
 
 #[derive(Debug, Clone, Copy)]
-// #[derive(Debug)]
 pub enum Operator {
     Add,
     Sub,
@@ -178,39 +181,36 @@ pub enum Operator {
 
 /* ===================== VALUES ===================== */
 
-// #[derive(Debug)]
 #[derive(Debug, Clone)]
 pub struct Value {
-    pub literal: Source<Literal>,
-    pub postfix: Vec<Source<Postfix>>,
+    pub literal: Span<Literal>,
+    pub postfix: Vec<Span<Postfix>>,
 }
 
 #[derive(Debug, Clone)]
-// #[derive(Debug)]
 pub enum Postfix {
-    Field(Source<SmolStr>),
-    Call(Vec<Source<Expression>>),
-    Index(Source<Expression>),
+    Field(Span<SmolStr>),
+    Call(Vec<Span<Expression>>),
+    Index(Span<Expression>),
+    Refs(usize),
+    Derefs(usize),
 }
 
 /* ===================== TYPES ===================== */
 
 #[derive(Debug, Clone)]
 pub struct Type {
-    pub path: Source<IdentifierPath>,
+    pub path: Span<IdentifierPath>,
 }
 
 /* ===================== IDENTIFIERS ===================== */
 
-// #[derive(Debug)]
 #[derive(Debug, Clone)]
 pub struct IdentifierPath {
-    pub path: Vec<Source<SmolStr>>,
+    pub path: Vec<Span<SmolStr>>,
 }
 
 /* ===================== LITERALS ===================== */
-
-// #[derive(Debug)]
 #[derive(Debug, Clone)]
 pub enum Literal {
     Identifier(IdentifierPath),
@@ -220,20 +220,17 @@ pub enum Literal {
     String(SmolStr),
     Char(char),
 
-    Array(Vec<Source<Expression>>),
-    Tuple(Vec<Source<Expression>>),
+    Array(Vec<Span<Expression>>),
+    Tuple(Vec<Span<Expression>>),
 }
 
 /* ===================== NUMBERS ===================== */
 
-// #[derive(Debug)]
 #[derive(Debug, Clone)]
 pub struct Number {
     pub value: NumberValue,
     pub size: Option<u32>,
 }
-
-// #[derive(Debug)]
 
 #[derive(Debug, Clone)]
 pub enum NumberValue {
@@ -244,7 +241,7 @@ pub enum NumberValue {
 }
 
 /* ====================== LOWERING =====================*/
-pub fn numeric_literal(s: &str) -> crate::ir::Number {
+pub fn numeric_literal(s: &str) -> Number {
     let s = s.replace('_', "");
 
     let is_float = s.contains('.') || s.contains('f') || s.contains('F');
@@ -259,8 +256,8 @@ pub fn numeric_literal(s: &str) -> crate::ir::Number {
     if is_float {
         let value: f64 = num_str.parse().unwrap();
         let size = suffix.map(|s| s.parse().ok()).flatten();
-        crate::ir::Number {
-            value: crate::ir::NumberValue::Float(value),
+        Number {
+            value: NumberValue::Float(value),
             size,
         }
     } else {
@@ -268,27 +265,27 @@ pub fn numeric_literal(s: &str) -> crate::ir::Number {
         let (number_value, size) = match suffix.map(|s| s.to_lowercase()) {
             Some(ref s) if s.starts_with('u') => {
                 let size = s[1..].parse().ok();
-                (crate::ir::NumberValue::Uint(value as u128), size)
+                (NumberValue::Uint(value as u128), size)
             }
             Some(ref s) if s.starts_with('i') => {
                 let size = s[1..].parse().ok();
-                (crate::ir::NumberValue::Int(value), size)
+                (NumberValue::Int(value), size)
             }
-            Some(ref s) if s.starts_with('c') => (crate::ir::NumberValue::Int(value), None),
-            None => (crate::ir::NumberValue::Number(value as u128), None),
+            Some(ref s) if s.starts_with('c') => (NumberValue::Int(value), None),
+            None => (NumberValue::Number(value as u128), None),
             Some(other) => panic!("Unknown numeric suffix: {}", other),
         };
 
-        crate::ir::Number {
+        Number {
             value: number_value,
             size,
         }
     }
 }
 
-pub fn float_literal(s: &str) -> crate::ir::NumberValue {
+pub fn float_literal(s: &str) -> NumberValue {
     let s = s.replace('_', "");
-    crate::ir::NumberValue::Float(s.parse().unwrap())
+    NumberValue::Float(s.parse().unwrap())
 }
 
 pub fn char_literal(s: &str) -> char {
@@ -359,7 +356,8 @@ impl Operator {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum ExprItem {
-    Value(crate::ir::Expression),
+    Value(Expression),
     Operator(Operator),
 }

@@ -2,6 +2,7 @@
 #![feature(portable_simd)]
 
 mod ecs;
+mod ecs_engine;
 mod helpers;
 mod procedural;
 mod soa;
@@ -12,4 +13,5 @@ fn main() {
     procedural::move_all();
     soa::move_all();
     soa::simd::move_all();
+    ecs_engine::move_all();
 }

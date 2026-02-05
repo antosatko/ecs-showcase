@@ -1,12 +1,12 @@
 const BASIC_IMAGE = Image("img/bullet.png")
 
 scheduler main {
-	resources {
+	resources (
 		Score(0)
 		SpawnInterval(60)
-	}
+	)
 
-	systems {
+	systems (
 		init
 		spawnBullets
 		applyPullForce
@@ -14,7 +14,7 @@ scheduler main {
 		playerCollision
 		playerHit
 		removeEnemy
-	}
+	)
 }
 
 component Position = float2
@@ -40,12 +40,12 @@ system init(action _: rt.Init) {
 		Player
 		Position((SCREEN_WIDTH/2, SCREEN_HEIGHT-50))
 		Radius(3)
-		FavouriteEnemy(rt.spawn! {
+		FavouriteEnemy(rt.spawn! (
 			Position((50, 50))
 			Speed((0, 0))
 			Radius(10)
 			BASIC_IMAGE
-		})
+		))
 	}
 }
 
@@ -58,16 +58,16 @@ system spawnBullets(action _: SpawnInterval + rt.Action) {
 	var dir = normalize(targetPos - pos)
 	var speed = Speed(dir * (1.5 + rand(1.5)))
 
-	rt.spawn! {
+	rt.spawn! (
 		pos
 		speed
 		Radius(5)
 		BASIC_IMAGE
 		EnemyRadius
 		Pullable
-	}
+	)
 }
-
+			
 system bMove(b: mut Position & Speed) {
 	b.Position += b.Speed
 }
@@ -76,13 +76,13 @@ system bMove(b: mut Position & Speed) {
 // Those two queries will never overlap
 system playerCollision(p: Player & Radius, mut b: EnemyRadius) {
 	if collisionC2C(p.Position, p.Radius, b.Position, b.Radius) {
-		rt.delete! b
-		batch rt.action! Player + Hit
+		rt.delete!(b)
+		rt.action!(Player, Hit)
 	}
 }
 
 system playerHit(action _: Player + Hit) {
-	rt.quit!
+	rt.quit!()
 }
 
 system applyPullForce(pairs (a, b): mut Speed & Pullable) {
@@ -102,16 +102,16 @@ system removeEnemy(action _: rt.Remove, entity: ?ScoreValue & Enemy) {
 	
 	scoreSum += entity.ScoreValue ?? 10
 	
-	batch rt.schedule! addScore(scoreSum)
+	batch rt.schedule!(addScore(scoreSum))
 }
 
-system addScore(resource score: mut Score, arg v: float) {
+system addScore(resource score: mut Score) (v: float) {
 	score += v
 }
 
 system playerGotHisFav(
 	resource score: mut Score,
-	p: Player & mut e=FavouriteEnemy,
+	p: Player & mut FavouriteEnemy as e,
 	join e: mut Radius & Position,       // p.FavouriteEnemy: mut Radius & Position
 ) {
 	if !collisionC2C(p.Position, p.Radius, e.Position, e.Radius) {
@@ -120,7 +120,7 @@ system playerGotHisFav(
 	e.Radius -= 0.1
 	score += 100
 	if e.Radius < 1 {
-		rt.remove! p.FavouriteEnemy
+		rt.remove!(p.FavouriteEnemy)
 	}
 }
 

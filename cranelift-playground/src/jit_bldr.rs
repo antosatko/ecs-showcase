@@ -93,7 +93,7 @@ impl IrGen {
         block: &lang_ir::Block,
         bldr: &mut FunctionBuilder,
         vars: &mut HashMap<SmolStr, Variable>,
-        loops: &mut Vec<(Option<SmolStr>, LoopCtx)>,
+        loops: &mut Vec<(Option<SmolStr>, BlockLabel)>,
     ) -> bool {
         for statement in &block.statements {
             if self.lower_statement(bldr, vars, loops, statement) {
@@ -107,7 +107,7 @@ impl IrGen {
         &mut self,
         bldr: &mut FunctionBuilder<'_>,
         vars: &mut HashMap<SmolStr, Variable>,
-        loops: &mut Vec<(Option<SmolStr>, LoopCtx)>,
+        loops: &mut Vec<(Option<SmolStr>, BlockLabel)>,
         statement: &Source<lang_ir::Statement>,
     ) -> bool {
         match &statement.inner {
@@ -139,8 +139,8 @@ impl IrGen {
 
                 loops.push((
                     label.clone().map(|v| v.inner),
-                    LoopCtx {
-                        continue_block: header,
+                    BlockLabel {
+                        continue_block: Some(header),
                         break_block: exit,
                     },
                 ));
@@ -160,15 +160,79 @@ impl IrGen {
                 bldr.switch_to_block(exit);
                 false
             }
-            lang_ir::Statement::Break => {
+            lang_ir::Statement::Break { label } => {
                 let ctx = loops.last().expect("break outside loop");
                 bldr.ins().jump(ctx.1.break_block, []);
                 true
             }
-            lang_ir::Statement::Continue => {
+            lang_ir::Statement::Continue { label } => {
                 let ctx = loops.last().expect("break outside loop");
-                bldr.ins().jump(ctx.1.continue_block, []);
+                bldr.ins()
+                    .jump(ctx.1.continue_block.expect("only break available"), []);
                 true
+            }
+            lang_ir::Statement::If {
+                condition,
+                then_block,
+                else_if,
+                else_block,
+            } => {
+                let exit_block = bldr.create_block();
+
+                // First condition
+                let cond_val = self.lower_expr(&condition.inner, bldr, vars);
+                let then_cl = bldr.create_block();
+                let else_cl = bldr.create_block();
+
+                bldr.ins().brif(cond_val, then_cl, &[], else_cl, &[]);
+
+                // --- then ---
+                bldr.switch_to_block(then_cl);
+                let terminated = self.lower_block(&then_block.inner, bldr, vars, loops);
+                if !terminated {
+                    bldr.ins().jump(exit_block, []);
+                }
+                bldr.seal_block(then_cl);
+
+                // --- else / else-if chain ---
+                let mut current_else = else_cl;
+
+                for (elif_cond, elif_block) in else_if {
+                    bldr.switch_to_block(current_else);
+
+                    let next_cond = self.lower_expr(&elif_cond.inner, bldr, vars);
+                    let elif_then = bldr.create_block();
+                    let elif_else = bldr.create_block();
+
+                    bldr.ins().brif(next_cond, elif_then, &[], elif_else, &[]);
+
+                    // elif body
+                    bldr.switch_to_block(elif_then);
+                    let terminated = self.lower_block(&elif_block.inner, bldr, vars, loops);
+                    if !terminated {
+                        bldr.ins().jump(exit_block, []);
+                    }
+                    bldr.seal_block(elif_then);
+
+                    current_else = elif_else;
+                }
+
+                // --- final else ---
+                bldr.switch_to_block(current_else);
+                if let Some(else_block) = else_block {
+                    let terminated = self.lower_block(&else_block.inner, bldr, vars, loops);
+                    if !terminated {
+                        bldr.ins().jump(exit_block, []);
+                    }
+                } else {
+                    bldr.ins().jump(exit_block, []);
+                }
+                bldr.seal_block(current_else);
+
+                bldr.switch_to_block(exit_block);
+                bldr.seal_block(exit_block);
+
+                false
             }
             _ => false,
         }
@@ -189,7 +253,7 @@ impl IrGen {
         bldr.seal_block(entry);
 
         let mut vars: HashMap<SmolStr, Variable> = HashMap::new();
-        let mut loops: Vec<(Option<SmolStr>, LoopCtx)> = Vec::new();
+        let mut loops: Vec<(Option<SmolStr>, BlockLabel)> = Vec::new();
         let returned = self.lower_block(&fun.body.inner, &mut bldr, &mut vars, &mut loops);
         if !returned {
             let zero = bldr.ins().iconst(types::I32, 0);
@@ -222,8 +286,8 @@ impl IrGen {
 pub fn params(p: impl IntoIterator<Item = Type>) -> Vec<AbiParam> {
     p.into_iter().map(|p| AbiParam::new(p)).collect()
 }
-struct LoopCtx {
-    continue_block: Block,
+struct BlockLabel {
+    continue_block: Option<Block>,
     break_block: Block,
 }
 

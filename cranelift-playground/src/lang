@@ -6,8 +6,9 @@ function main(): int {
 
 function two(): int {
 	loop {
-		var a = 5
-		break
+		if 1 {
+			break
+		}
 	}
 	return 6
 }

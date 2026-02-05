@@ -4,17 +4,17 @@ use bevy_ecs::component::Component;
 use rand::random_range;
 
 pub const BIG_NUMBER: usize = 10_000_000;
-pub const ANYDATA_SIZE: usize = 64;
+pub const ANYDATA_SIZE: usize = 128;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Float2(pub f32, pub f32);
 
-#[derive(Component)]
+#[derive(Component, Copy, Clone)]
 pub struct AnyData([u8; ANYDATA_SIZE]);
 
 impl Display for AnyData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AnyData(...)")
+        write!(f, "AnyData(...{})", size_of::<Self>())
     }
 }
 

@@ -36,14 +36,21 @@ pub fn move_all() {
             let mut world = World::new();
             let mut schedule = Schedule::default();
 
-            world.spawn_batch((0..BIG_NUMBER).map(|_| {
-                (
-                    Position(Float2::random(0.0..100.0)),
-                    Velocity(Float2::random(-5.0..5.0)),
-                    AnyData::default(),
-                    GravityTag,
-                )
-            }));
+            for i in 0..BIG_NUMBER {
+                match i % 2 {
+                    0 => world.spawn((
+                        Position(Float2::random(0.0..100.0)),
+                        Velocity(Float2::random(-5.0..5.0)),
+                        AnyData::default(),
+                        GravityTag,
+                    )),
+                    _ => world.spawn((
+                        Velocity(Float2::random(-5.0..5.0)),
+                        AnyData::default(),
+                        GravityTag,
+                    )),
+                };
+            }
 
             schedule.add_systems(gravity);
             schedule.add_systems(movement);

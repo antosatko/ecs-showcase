@@ -1,204 +1,85 @@
 use std::collections::HashMap;
 
 use arena::Arena;
-use ruparse::parser::Nodes;
+use ruparse::{
+    lexer::Token,
+    parser::{Node, Nodes},
+};
 use smol_str::SmolStr;
 
-use crate::ir::{
-    Associativity, ExprItem, Function, Module, Object, Source, char_literal, numeric_literal,
+use lang_ir::ast::{
+    Associativity, Block, ExprItem, Expression, Function, IdentifierPath, Literal, Module, Object,
+    Operator, Parameter, Span, SpanIndex, Statement, Type, Value, char_literal, numeric_literal,
     string_literal,
 };
 
-impl<'a> From<Nodes<'a>> for Module {
-    fn from(value: Nodes<'a>) -> Self {
-        Module::named("module", "", &value)
-    }
-}
+pub fn module_named(name: impl Into<SmolStr>, src: &str, node: &Nodes) -> Module {
+    let mut module = Module {
+        name: name.into(),
+        docs: docstrings(src, node),
+        objects: Arena::new(),
+        symbols: HashMap::new(),
+    };
 
-impl Module {
-    pub fn named(name: impl Into<SmolStr>, src: &str, node: &Nodes) -> Self {
-        let mut this = Self {
-            name: name.into(),
-            docs: docstrings(src, node),
-            objects: Arena::new(),
-            symbols: HashMap::new(),
-        };
+    for s in node.get_list("top level statements") {
+        match s.get_name() {
+            "scheduler" => {
+                let ident = expect_ident(src, s);
+                let docs = docstrings(src, s);
 
-        node.get_list("top level statements")
-            .iter()
-            .for_each(|s| match s.get_name() {
-                "scheduler" => {
-                    let ident = expect_ident(src, s);
-                    let docs = docstrings(src, s);
-                    let mut resources = Vec::new();
-                    let mut systems = Vec::new();
-                    if let Some(res) = s.try_get_node("resources").as_ref() {
-                        for r in res.get_list("resources") {
-                            resources.push(value(src, r));
-                        }
+                let mut resources = Vec::new();
+                let mut systems = Vec::new();
+
+                if let Some(res) = s.try_get_node("resources").as_ref() {
+                    for r in res.get_list("resources") {
+                        resources.push(value(src, r));
                     }
-                    if let Some(sys) = s.try_get_node("systems").as_ref() {
-                        for p in sys.get_list("systems") {
-                            systems.push(ident_path(src, p));
-                        }
+                }
+
+                if let Some(sys) = s.try_get_node("systems").as_ref() {
+                    for p in sys.get_list("systems") {
+                        systems.push(ident_path(src, p));
                     }
-                    let obj = Object::Scheduler {
-                        ident: ident.clone(),
-                        resources,
-                        systems,
-                        docs,
-                    };
-                    let key = this.objects.push(Source::new(obj, s.location()));
-                    this.symbols.insert(ident.inner, key);
                 }
-                "function" => {
-                    let ident = expect_ident(src, s);
 
-                    let params = parameters(src, s.expect_node("parameters"));
+                let obj = Object::Scheduler {
+                    ident: ident.clone(),
+                    resources,
+                    systems,
+                    docs,
+                };
 
-                    let return_type = s.try_get_node("return type").as_ref().map(|t| ty(src, &t));
+                let key = module.objects.push(span(obj, s));
+                module.symbols.insert(ident.inner, key);
+            }
 
-                    let body = block(src, s.expect_node("code block"));
+            "function" => {
+                let ident = expect_ident(src, s);
+                let params = parameters(src, s.expect_node("parameters"));
+                let return_type = s.try_get_node("return type").as_ref().map(|t| ty(src, t));
+                let body = block(src, s.expect_node("code block"));
+                let docs = docstrings(src, s);
 
-                    let docs = docstrings(src, s);
+                let obj = Object::Function(Function {
+                    ident: ident.clone(),
+                    parameters: params,
+                    return_type,
+                    body,
+                    docs,
+                });
 
-                    let obj = Object::Function(Function {
-                        ident: ident.clone(),
-                        parameters: params,
-                        return_type,
-                        body,
-                        docs,
-                    });
+                let key = module.objects.push(span(obj, s));
+                module.symbols.insert(ident.inner, key);
+            }
 
-                    let key = this.objects.push(Source::new(obj, s.location()));
-                    this.symbols.insert(ident.inner, key);
-                }
-                _ => s.ice("fix your damn compiler"),
-            });
-
-        this
-    }
-}
-
-#[track_caller]
-pub fn ident(src: &str, node: &Nodes) -> Option<Source<SmolStr>> {
-    node.try_get_node("identifier").as_ref().map(|t| {
-        Source::new(
-            t.expect_node("identifier").stringify(src).into(),
-            t.location(),
-        )
-    })
-}
-
-#[track_caller]
-pub fn expect_ident(src: &str, node: &Nodes) -> Source<SmolStr> {
-    let t = node.expect_node("identifier");
-    match t {
-        Nodes::Node(n) => {
-            let tok = n.try_get_node("identifier").as_ref().unwrap();
-            Source::new(tok.stringify(src).into(), tok.location())
+            other => s.ice(&format!("Unhandled top-level item: {}", other)),
         }
-        Nodes::Token(tok) => Source::new(tok.stringify(src).into(), tok.location),
     }
+
+    module
 }
 
-#[track_caller]
-fn ident_path(src: &str, node: &Nodes) -> Source<crate::ir::IdentifierPath> {
-    let path = node
-        .get_list("path")
-        .iter()
-        .map(|p| Source::new(p.stringify(src).into(), p.location()))
-        .collect();
-
-    Source::new(crate::ir::IdentifierPath { path }, node.location())
-}
-
-fn literal(src: &str, node: &Nodes) -> Source<crate::ir::Literal> {
-    match node {
-        Nodes::Node(n) => match n.name {
-            "identifier path" => Source::new(
-                crate::ir::Literal::Identifier(ident_path(src, node).inner),
-                node.location(),
-            ),
-            "array literal" => {
-                let elements = n
-                    .get_list("elements")
-                    .iter()
-                    .map(|e| expression(src, e))
-                    .collect();
-                Source::new(crate::ir::Literal::Array(elements), node.location())
-            }
-            "tuple" => {
-                let elements = n
-                    .get_list("elements")
-                    .iter()
-                    .map(|e| expression(src, e))
-                    .collect();
-                Source::new(crate::ir::Literal::Tuple(elements), node.location())
-            }
-            other => node.ice(&format!("Unhandled literal node: {}", other)),
-        },
-        Nodes::Token(tok) => match &tok.kind {
-            ruparse::lexer::TokenKinds::Complex(kind) => match kind.as_ref() {
-                "string" => {
-                    let s = string_literal(&tok.stringify(src));
-                    Source::new(crate::ir::Literal::String(s), tok.location)
-                }
-                "char" => {
-                    let c = char_literal(&tok.stringify(src));
-                    Source::new(crate::ir::Literal::Char(c), tok.location)
-                }
-                "numeric" | "float" => {
-                    let num = numeric_literal(&tok.stringify(src));
-                    Source::new(crate::ir::Literal::Number(num), tok.location)
-                }
-                other => panic!("Unhandled token literal kind: {}", other),
-            },
-            _ => panic!("Unexpected token kind for literal: {:?}", tok.kind),
-        },
-    }
-}
-
-fn value(src: &str, node: &Nodes) -> Source<crate::ir::Value> {
-    let literal = literal(src, node.expect_node("literal"));
-
-    Source::new(
-        crate::ir::Value {
-            literal,
-            postfix: Vec::new(),
-        },
-        node.location(),
-    )
-}
-
-fn ty(src: &str, node: &Nodes) -> Source<crate::ir::Type> {
-    let path = ident_path(src, node.expect_node("path"));
-    Source::new(crate::ir::Type { path }, node.location())
-}
-
-fn parameter(src: &str, node: &Nodes) -> Source<crate::ir::Parameter> {
-    let ident = expect_ident(src, node.expect_node("identifier"));
-    let ty = ty(src, node.expect_node("type"));
-    Source::new(crate::ir::Parameter { ident, ty }, node.location())
-}
-
-fn parameters(src: &str, node: &Nodes) -> Vec<Source<crate::ir::Parameter>> {
-    node.get_list("parameters")
-        .iter()
-        .map(|p| parameter(src, p))
-        .collect()
-}
-
-#[track_caller]
-fn docstrings(src: &str, node: &Nodes) -> Vec<Source<SmolStr>> {
-    node.expect_node("docs")
-        .get_list("docstr")
-        .iter()
-        .map(|d| Source::new(d.stringify(src).into(), d.location()))
-        .collect()
-}
-
-fn block(src: &str, node: &Nodes) -> Source<crate::ir::Block> {
+fn block(src: &str, node: &Nodes) -> Span<Block> {
     let mut statements = Vec::new();
 
     for stmt_node in node.get_list("statements") {
@@ -211,48 +92,87 @@ fn block(src: &str, node: &Nodes) -> Source<crate::ir::Block> {
                     .as_ref()
                     .map(|e| expression(src, e));
 
-                Source::new(
-                    crate::ir::Statement::Var {
+                span(
+                    Statement::Var {
                         ident,
                         ty,
                         expression,
                     },
-                    stmt_node.location(),
+                    stmt_node,
                 )
             }
 
             "return" => {
                 let expr = expression(src, stmt_node.expect_node("expression"));
-                Source::new(
-                    crate::ir::Statement::Return { expression: expr },
-                    stmt_node.location(),
-                )
+                span(Statement::Return { expression: expr }, stmt_node)
             }
 
             "loop" => {
-                let label = stmt_node
-                    .try_get_node("label")
-                    .as_ref()
-                    .map(|l| expect_ident(src, l));
-                let body_node = stmt_node.expect_node("code block");
-                let body = block(src, &body_node);
-
-                Source::new(
-                    crate::ir::Statement::Loop { label, body },
-                    stmt_node.location(),
-                )
+                let label = try_label(src, stmt_node);
+                let body = block(src, stmt_node.expect_node("code block"));
+                span(Statement::Loop { label, body }, stmt_node)
             }
 
             "expression statement" => {
                 let expr = expression(src, stmt_node.expect_node("expression"));
-                Source::new(
-                    crate::ir::Statement::Expr { expression: expr },
-                    stmt_node.location(),
+                span(Statement::Expr { expression: expr }, stmt_node)
+            }
+
+            "break" => span(
+                Statement::Break {
+                    label: try_label(src, stmt_node),
+                },
+                stmt_node,
+            ),
+
+            "continue" => span(
+                Statement::Continue {
+                    label: try_label(src, stmt_node),
+                },
+                stmt_node,
+            ),
+
+            "if" => {
+                let condition = expression(src, stmt_node.expect_node("expression"));
+                let then_block = block(src, stmt_node.expect_node("code block"));
+
+                let mut else_if = Vec::new();
+                for elif in stmt_node.get_list("else if") {
+                    let cond = expression(src, elif.expect_node("expression"));
+                    let block = block(src, elif.expect_node("code block"));
+                    else_if.push((cond, block));
+                }
+
+                let else_block = stmt_node
+                    .try_get_node("else")
+                    .as_ref()
+                    .map(|e| block(src, e.expect_node("code block")));
+
+                span(
+                    Statement::If {
+                        condition,
+                        then_block,
+                        else_if,
+                        else_block,
+                    },
+                    stmt_node,
                 )
             }
 
-            "break" => Source::new(crate::ir::Statement::Break, stmt_node.location()),
-            "continue" => Source::new(crate::ir::Statement::Continue, stmt_node.location()),
+            "while" => {
+                let label = try_label(src, stmt_node);
+                let condition = expression(src, stmt_node.expect_node("expression"));
+                let body = block(src, stmt_node.expect_node("code block"));
+
+                span(
+                    Statement::While {
+                        label,
+                        condition,
+                        body,
+                    },
+                    stmt_node,
+                )
+            }
 
             other => stmt_node.ice(&format!("Unhandled statement type: {}", other)),
         };
@@ -260,35 +180,44 @@ fn block(src: &str, node: &Nodes) -> Source<crate::ir::Block> {
         statements.push(stmt);
     }
 
-    Source::new(crate::ir::Block { statements }, node.location())
+    span(Block { statements }, node)
 }
 
-fn expression(src: &str, node: &Nodes) -> Source<crate::ir::Expression> {
+#[track_caller]
+fn try_label(src: &str, node: &Nodes) -> Option<Span<SmolStr>> {
+    node.try_get_node("label")
+        .as_ref()
+        .map(|l| expect_ident(src, l))
+}
+
+fn expression(src: &str, node: &Nodes) -> Span<Expression> {
     let items = expression_items(src, node);
     let mut pos = 0;
     parse_expression_prec(&items, &mut pos, 0)
 }
 
 fn parse_expression_prec(
-    items: &[Source<ExprItem>],
+    items: &[Span<ExprItem>],
     pos: &mut usize,
     min_prec: u8,
-) -> Source<crate::ir::Expression> {
+) -> Span<Expression> {
     let mut lhs = match &items[*pos].inner {
         ExprItem::Value(expr) => {
-            let src = &items[*pos];
+            let v = expr.clone();
+            let s = items[*pos].clone().map(|_| v);
             *pos += 1;
-            Source::new(expr.clone(), src.location)
+            s
         }
         _ => unreachable!("expression must start with value"),
     };
 
     while *pos < items.len() {
         let op_item = &items[*pos];
-        let op = match &op_item.inner {
-            ExprItem::Operator(op) => *op,
+        let op = match op_item.inner {
+            ExprItem::Operator(op) => op,
             _ => break,
         };
+        let spanned_op = op_item.clone().map(|_| op);
 
         let prec = op.precedence();
         if prec < min_prec {
@@ -296,52 +225,43 @@ fn parse_expression_prec(
         }
 
         *pos += 1;
-
         let next_min_prec = match op.associativity() {
             Associativity::Left => prec + 1,
             Associativity::Right => prec,
         };
 
         let rhs = parse_expression_prec(items, pos, next_min_prec);
-        let lhs_loc = lhs.location;
 
-        lhs = Source::new(
-            crate::ir::Expression::Binary {
+        let loc = lhs.location;
+        lhs = Span::new(
+            Expression::Binary {
                 l: lhs.map(Box::new),
                 r: rhs.map(Box::new),
-                op: Source::new(op, op_item.location),
+                op: spanned_op,
             },
-            lhs_loc,
+            loc,
         );
     }
 
     lhs
 }
 
-fn expression_items(src: &str, node: &Nodes) -> Vec<Source<ExprItem>> {
+fn expression_items(src: &str, node: &Nodes) -> Vec<Span<ExprItem>> {
     let mut items = Vec::new();
 
     let lvalue_node = node.expect_node("lvalue");
     let lvalue = value(src, &lvalue_node);
-
-    items.push(Source::new(
-        ExprItem::Value(crate::ir::Expression::Value(lvalue.inner)),
-        lvalue.location,
-    ));
+    items.push(lvalue.map(|v| ExprItem::Value(Expression::Value(v))));
 
     for entry in node.get_list("rest") {
         match entry {
             Nodes::Token(_) => {
                 let op = operator(src, entry);
-                items.push(Source::new(ExprItem::Operator(op.inner), op.location));
+                items.push(op.map(ExprItem::Operator));
             }
-
             Nodes::Node(_) => {
                 let v = value(src, entry);
-                items.push(Source::new(
-                    ExprItem::Value(crate::ir::Expression::Value(v.inner)),
-                    v.location,
-                ));
+                items.push(v.map(|v| ExprItem::Value(Expression::Value(v))));
             }
         }
     }
@@ -349,33 +269,162 @@ fn expression_items(src: &str, node: &Nodes) -> Vec<Source<ExprItem>> {
     items
 }
 
-fn operator(src: &str, node: &Nodes) -> Source<crate::ir::Operator> {
+fn operator(src: &str, node: &Nodes) -> Span<Operator> {
     let op = match node.stringify(src) {
-        "+" => crate::ir::Operator::Add,
-        "-" => crate::ir::Operator::Sub,
-        "*" => crate::ir::Operator::Mul,
-        "/" => crate::ir::Operator::Div,
-        "%" => crate::ir::Operator::Mod,
-
-        "==" => crate::ir::Operator::Eq,
-        "!=" => crate::ir::Operator::NEq,
-        ">" => crate::ir::Operator::Gr,
-        "<" => crate::ir::Operator::Le,
-        ">=" => crate::ir::Operator::GrEq,
-        "<=" => crate::ir::Operator::LeEq,
-
-        "&&" => crate::ir::Operator::And,
-        "||" => crate::ir::Operator::Or,
-
-        "=" => crate::ir::Operator::Assign,
-        "+=" => crate::ir::Operator::AddAssign,
-        "-=" => crate::ir::Operator::SubAssign,
-        "*=" => crate::ir::Operator::MulAssign,
-        "/=" => crate::ir::Operator::DivAssign,
-        "%=" => crate::ir::Operator::ModAssign,
-
+        "+" => Operator::Add,
+        "-" => Operator::Sub,
+        "*" => Operator::Mul,
+        "/" => Operator::Div,
+        "%" => Operator::Mod,
+        "==" => Operator::Eq,
+        "!=" => Operator::NEq,
+        ">" => Operator::Gr,
+        "<" => Operator::Le,
+        ">=" => Operator::GrEq,
+        "<=" => Operator::LeEq,
+        "&&" => Operator::And,
+        "||" => Operator::Or,
+        "=" => Operator::Assign,
+        "+=" => Operator::AddAssign,
+        "-=" => Operator::SubAssign,
+        "*=" => Operator::MulAssign,
+        "/=" => Operator::DivAssign,
+        "%=" => Operator::ModAssign,
         other => node.ice(&format!("Unknown operator: {}", other)),
     };
 
-    Source::new(op, node.location())
+    span(op, node)
+}
+
+#[track_caller]
+pub fn ident(src: &str, node: &Nodes) -> Option<Span<SmolStr>> {
+    node.try_get_node("identifier").as_ref().map(|t| match t {
+        Nodes::Node(n) => span_from_node(t.stringify(src).into(), n),
+        Nodes::Token(tok) => span_from_token(tok.stringify(src).into(), tok),
+    })
+}
+
+#[track_caller]
+pub fn expect_ident(src: &str, node: &Nodes) -> Span<SmolStr> {
+    let t = node.expect_node("identifier");
+    match t {
+        Nodes::Node(n) => span_from_node(t.stringify(src).into(), n),
+        Nodes::Token(tok) => span_from_token(tok.stringify(src).into(), tok),
+    }
+}
+
+fn ident_path(src: &str, node: &Nodes) -> Span<IdentifierPath> {
+    let path = node
+        .get_list("path")
+        .iter()
+        .map(|p| span(p.stringify(src).into(), p))
+        .collect();
+
+    span(IdentifierPath { path }, node)
+}
+
+fn literal(src: &str, node: &Nodes) -> Span<Literal> {
+    match node {
+        Nodes::Node(n) => match n.name {
+            "identifier path" => {
+                let path = ident_path(src, node);
+                path.map(Literal::Identifier)
+            }
+
+            "array literal" => {
+                let elements = n
+                    .get_list("elements")
+                    .iter()
+                    .map(|e| expression(src, e))
+                    .collect();
+
+                span(Literal::Array(elements), node)
+            }
+
+            "tuple" => {
+                let elements = n
+                    .get_list("elements")
+                    .iter()
+                    .map(|e| expression(src, e))
+                    .collect();
+
+                span(Literal::Tuple(elements), node)
+            }
+
+            other => node.ice(&format!("Unhandled literal node: {}", other)),
+        },
+
+        Nodes::Token(tok) => match &tok.kind {
+            ruparse::lexer::TokenKinds::Complex(kind) => match kind.as_ref() {
+                "string" => {
+                    span_from_token(Literal::String(string_literal(&tok.stringify(src))), tok)
+                }
+
+                "char" => span_from_token(Literal::Char(char_literal(&tok.stringify(src))), tok),
+
+                "numeric" | "float" => {
+                    span_from_token(Literal::Number(numeric_literal(&tok.stringify(src))), tok)
+                }
+
+                other => panic!("Unhandled token literal kind: {}", other),
+            },
+
+            _ => panic!("Unexpected token kind for literal: {:?}", tok.kind),
+        },
+    }
+}
+
+fn value(src: &str, node: &Nodes) -> Span<Value> {
+    let literal = literal(src, node.expect_node("literal"));
+
+    span(
+        Value {
+            literal,
+            postfix: Vec::new(),
+        },
+        node,
+    )
+}
+
+fn ty(src: &str, node: &Nodes) -> Span<Type> {
+    let path = ident_path(src, node.expect_node("path"));
+    span(Type { path }, node)
+}
+
+fn parameter(src: &str, node: &Nodes) -> Span<Parameter> {
+    let ident = expect_ident(src, node.expect_node("identifier"));
+    let ty = ty(src, node.expect_node("type"));
+    span(Parameter { ident, ty }, node)
+}
+
+fn parameters(src: &str, node: &Nodes) -> Vec<Span<Parameter>> {
+    node.get_list("parameters")
+        .iter()
+        .map(|p| parameter(src, p))
+        .collect()
+}
+
+#[track_caller]
+fn docstrings(src: &str, node: &Nodes) -> Vec<Span<SmolStr>> {
+    node.expect_node("docs")
+        .get_list("docstr")
+        .iter()
+        .map(|d| span(d.stringify(src).into(), d))
+        .collect()
+}
+
+pub fn span<T>(v: T, node: &Nodes) -> Span<T> {
+    let index = node.str_idx();
+    let len = index - node.str_last_idx();
+    Span::new(v, SpanIndex { index, len })
+}
+pub fn span_from_node<T>(v: T, node: &Node) -> Span<T> {
+    let index = node.location.index;
+    let len = node.location.len;
+    Span::new(v, SpanIndex { index, len })
+}
+pub fn span_from_token<T>(v: T, token: &Token) -> Span<T> {
+    let index = token.location.index;
+    let len = token.location.len;
+    Span::new(v, SpanIndex { index, len })
 }

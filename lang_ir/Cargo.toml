@@ -1,0 +1,8 @@
+[package]
+name = "lang_ir"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arena = {path = "../../mylibs/arena"}
+smol_str = "0.3.5"

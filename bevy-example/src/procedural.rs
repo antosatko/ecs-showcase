@@ -5,9 +5,10 @@ use crate::{
 
 pub fn move_all() {
     struct Unit {
+        pub any_data: AnyData,
         pub position: Float2,
         pub velocity: Float2,
-        pub any_data: AnyData,
+        pub has_gravity: bool,
     }
 
     impl Unit {
@@ -17,7 +18,9 @@ pub fn move_all() {
         }
 
         pub fn gravity(&mut self) {
-            self.velocity.1 += 0.03;
+            if self.has_gravity {
+                self.velocity.1 += 0.03;
+            }
         }
     }
 
@@ -31,6 +34,7 @@ pub fn move_all() {
                     position: Float2::random(0.0..100.0),
                     velocity: Float2::random(-5.0..5.0),
                     any_data: AnyData::default(),
+                    has_gravity: true,
                 });
             }
 

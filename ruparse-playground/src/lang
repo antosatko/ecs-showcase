@@ -26,10 +26,21 @@ function danda(abc: std::sfdg, asd: int,): int {
     outer: loop {
         // bla bla bla
         var danda = 6.7f32
-        var danda = a  
+        var danda = a.nevim.**&[8]()  
         inner: loop{}
         var danda = 8;
+
+        if true {
+            while true {
+                
+            }
+        }else if a {} else if b {
+            
+        }else {
+            
+        }
     
+        nevim: break
     }
 }
 
