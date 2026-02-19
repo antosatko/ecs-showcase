@@ -49,9 +49,8 @@ pub struct Entity {
     pub archetype_id: ArchetypeId,
 }
 
-pub struct EntitySpawner<'world> {
-    signature: ExplicitSignature,
-    components: Vec<Array>,
+pub struct EntitySpawner<'world, 'data> {
+    components: Vec<(&'data [u8], usize)>,
     world: &'world mut World,
 }
 
@@ -247,33 +246,35 @@ impl<'world> WorldRefSig<'world, '_> {
     }
 }
 
-impl<'world> EntitySpawner<'world> {
+impl<'world, 'data> EntitySpawner<'world, 'data> {
     pub fn new(world: &'world mut World) -> Self {
         Self {
-            signature: Vec::new(),
-            components: Vec::new(),
+            components: Vec::with_capacity(10),
             world,
         }
     }
 
-    pub fn component<T>(mut self, data: T, kind: TypedComponentRef<T>) -> Self {
+    pub fn clear(&mut self) {
+        self.components.clear();
+    }
+
+    pub fn component<T>(mut self, data_ref: &T, kind: TypedComponentRef<T>) -> Self {
         assert!(
-            !self.signature.contains(&kind.0),
+            !self.components.iter().any(|(_, s)| *s == kind.0),
             "A component can be assigned only once"
         );
 
         let bytes: &[u8] =
-            unsafe { slice::from_raw_parts(&data as *const T as *const u8, size_of::<T>()) };
+            unsafe { slice::from_raw_parts(data_ref as *const T as *const u8, size_of::<T>()) };
 
-        self.signature.push(kind.0);
-        self.components.push(bytes.to_vec());
+        self.components.push((bytes, kind.0));
 
         self
     }
 
-    pub fn spawn(self) -> EntityRef {
+    pub fn spawn(&mut self) -> EntityRef {
         let mut impl_sig = BitSet::new();
-        for com_ref in &self.signature {
+        for (_, com_ref) in &self.components {
             impl_sig.insert(*com_ref);
         }
 
@@ -290,13 +291,14 @@ impl<'world> EntitySpawner<'world> {
                 for (idx, signature) in arch.signature.iter().enumerate() {
                     let dst = unsafe { &mut *arch.components[idx].get() };
                     let src_idx = self
-                        .signature
+                        .components
                         .iter()
+                        .map(|(_, sig)| sig)
                         .position(|sig| sig == &signature)
                         .unwrap();
                     let src = &self.components[src_idx];
-                    assert_eq!(dst.1, src.len());
-                    dst.0.extend_from_slice(src);
+                    assert_eq!(dst.1, src.0.len());
+                    dst.0.extend_from_slice(src.0);
                 }
                 let len = arch.entites.len();
                 return self.world.add_entity(&key, len);
@@ -307,12 +309,15 @@ impl<'world> EntitySpawner<'world> {
                 let arch = self.world.archetypes.get_mut_unchecked(&arch_key);
                 for (idx, comp_ref) in impl_sig.iter().enumerate() {
                     let src = self
-                        .signature
+                        .components
                         .iter()
+                        .map(|(_, sig)| sig)
                         .position(|comp_found| comp_found == &comp_ref)
                         .unwrap();
-                    arch.components[idx] =
-                        UnsafeCell::new((self.components[src].clone(), self.components[src].len()));
+                    arch.components[idx] = UnsafeCell::new((
+                        self.components[src].0.to_vec(),
+                        self.components[src].0.len(),
+                    ));
                 }
                 return self.world.add_entity(&arch_key, 0);
             }
@@ -324,7 +329,7 @@ impl Querry {
     pub fn new() -> Self {
         Self {
             signature: Default::default(),
-            ordered_signature: Vec::new(),
+            ordered_signature: Vec::with_capacity(10),
             bound_count: 0,
         }
     }
@@ -363,14 +368,14 @@ mod tests {
         let c_player_tag = world.define_component();
 
         EntitySpawner::new(&mut world)
-            .component((0.0, 0.0), c_position)
-            .component((1.1, 5.5), c_velocity)
-            .component((), c_player_tag)
+            .component(&(0.0, 0.0), c_position)
+            .component(&(1.1, 5.5), c_velocity)
+            .component(&(), c_player_tag)
             .spawn();
 
         EntitySpawner::new(&mut world)
-            .component((100.0, 5.0), c_position)
-            .component((-10.0, 0.0), c_velocity)
+            .component(&(100.0, 5.0), c_position)
+            .component(&(-10.0, 0.0), c_velocity)
             .spawn();
 
         world.run_querry(
