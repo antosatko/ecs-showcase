@@ -28,18 +28,17 @@ pub fn move_all() {
             let mut entity_spawner = EntitySpawner::new(&mut world);
             for _ in 0..BIG_NUMBER / 2 {
                 entity_spawner = entity_spawner
-                    .component(&Float2::random(0.0..100.0), c_position)
-                    .component(&Float2::random(-5.0..5.0), c_velocity)
-                    .component(&AnyData::default(), c_anydata)
-                    .component(&(), c_gravity);
+                    .component(Float2::random(0.0..100.0), c_position)
+                    .component(Float2::random(-5.0..5.0), c_velocity)
+                    .component(AnyData::default(), c_anydata)
+                    .component((), c_gravity);
                 entity_spawner.spawn();
                 entity_spawner.clear();
                 entity_spawner = entity_spawner
-                    .component(&Float2::random(-5.0..5.0), c_velocity)
-                    .component(&AnyData::default(), c_anydata)
-                    .component(&(), c_gravity);
+                    .component(Float2::random(-5.0..5.0), c_velocity)
+                    .component(AnyData::default(), c_anydata)
+                    .component((), c_gravity);
                 entity_spawner.spawn();
-                entity_spawner.clear();
             }
             Program {
                 world,
@@ -53,7 +52,7 @@ pub fn move_all() {
             let mut b_position = Default::default();
 
             prog.world.run_querry(
-                &Querry::new()
+                &Querry::new(&prog.world)
                     .include_bind(prog.c_position, &mut b_position)
                     .include(prog.c_gravity),
                 |world| {
@@ -66,7 +65,7 @@ pub fn move_all() {
             let mut b_velocity = Default::default();
 
             prog.world.run_querry(
-                &Querry::new()
+                &Querry::new(&prog.world)
                     .include_bind(prog.c_position, &mut b_position)
                     .include_bind(prog.c_velocity, &mut b_velocity),
                 |world| {

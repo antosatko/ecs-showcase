@@ -1,20 +1,36 @@
 use core::slice;
-use std::{cell::UnsafeCell, collections::HashMap, marker::PhantomData};
+use std::{
+    any::{Any, TypeId},
+    cell::UnsafeCell,
+    collections::HashMap,
+    marker::PhantomData,
+    mem::MaybeUninit,
+    ptr::NonNull,
+};
 
+use any_vec::{
+    AnyVec,
+    any_value::{AnyValue, AnyValueRaw, AnyValueTypeless, AnyValueWrapper},
+    mem::{Heap, MemBuilder},
+};
 use arena::{Arena, DynArena, DynKey, Key};
-use bit_set::BitSet;
+use smallbitvec::SmallBitVec;
+
+use crate::bitset::Bitset;
+
+mod bitset;
 
 pub type Unit = u8;
 pub type Mutability = bool;
 pub type Required = bool;
-pub type Array = Vec<Unit>;
+pub type Array = AnyVec;
 pub type ComponentId = usize;
 pub type ComponentRef = usize;
 pub type ComponentSize = usize;
 /// An ordered list of components
 pub type ExplicitSignature = Vec<ComponentRef>;
 /// An unordered list of components (ordering defaults to ComponentRef <)
-pub type ImplicitSignature = BitSet;
+pub type ImplicitSignature = Bitset;
 pub type ArchetypeId = usize;
 pub type ComponentQuerry = (ComponentRef, Required, Mutability);
 pub type EntityRef = DynKey<EntityTag>;
@@ -29,13 +45,13 @@ pub struct EntityTag;
 pub struct World {
     pub entities: DynArena<Entity, EntityTag>,
     pub archetypes: Arena<Archetype, ArchetypeTag>,
-    pub components: Vec<ComponentSize>,
+    components: Vec<ComponentData>,
 }
 
 pub struct Archetype {
     signature: ImplicitSignature,
-    components: Vec<UnsafeCell<(Array, ComponentSize)>>,
-    entites: ArrayParents,
+    components: Vec<UnsafeCell<ComponentData>>,
+    entities: ArrayParents,
     edges: HashMap<ComponentRef, ArcheTypeEdge>,
 }
 
@@ -49,14 +65,21 @@ pub struct Entity {
     pub archetype_id: ArchetypeId,
 }
 
-pub struct EntitySpawner<'world, 'data> {
-    components: Vec<(&'data [u8], usize)>,
+pub struct EntitySpawner<'world> {
+    sig: ImplicitSignature,
+    components: Vec<(AnyVec, usize)>,
     world: &'world mut World,
+    spawned: bool,
+}
+
+struct ComponentData {
+    pub size: usize,
+    pub container: AnyVec,
 }
 
 pub struct WorldRefSig<'world, 'querry> {
     arch_entity_idx: usize,
-    components: &'world [UnsafeCell<(Array, ComponentSize)>],
+    components: &'world [UnsafeCell<ComponentData>],
     signature: &'world ImplicitSignature,
     binds: &'querry [Option<ComponentRef>],
 }
@@ -64,6 +87,14 @@ pub struct WorldRefSig<'world, 'querry> {
 #[derive(Clone, Hash, Default)]
 struct QuerrySignature {
     include: ImplicitSignature,
+}
+
+impl QuerrySignature {
+    pub fn new(comps: usize) -> Self {
+        Self {
+            include: Bitset::with_capacity(comps),
+        }
+    }
 }
 
 pub struct Querry {
@@ -85,10 +116,13 @@ impl World {
 
     pub fn define_component<T>(&mut self) -> TypedComponentRef<T>
     where
-        T: Sized + Copy,
+        T: Sized + Copy + 'static,
     {
         let id = self.components.len();
-        self.components.push(size_of::<T>());
+        self.components.push(ComponentData {
+            size: size_of::<T>(),
+            container: AnyVec::new::<T>(),
+        });
         (id, Default::default())
     }
 
@@ -97,39 +131,53 @@ impl World {
             archetype_key: *arch_key,
             archetype_id: arch_id,
         });
-        self.archetypes.get_mut_unchecked(arch_key).entites.push(id);
+        self.archetypes
+            .get_mut_unchecked(arch_key)
+            .entities
+            .push(id);
         id
     }
 
+    pub fn entity_count(&self) -> usize {
+        self.entities.len()
+    }
+
+    pub fn archetype_count(&self) -> usize {
+        self.archetypes.len()
+    }
+
     fn add_archetype_with_init(&mut self, mut archetype: Archetype) -> Key<ArchetypeTag> {
-        for comp_ref in &archetype.signature {
-            let size = self.components[comp_ref];
-            archetype
-                .components
-                .push(UnsafeCell::new((Vec::new(), size)));
+        for comp_ref in archetype.signature.iter_inserted() {
+            let c_desc = &self.components[comp_ref];
+            archetype.components.push(UnsafeCell::new(ComponentData {
+                container: c_desc.container.clone_empty(),
+                size: c_desc.size,
+            }));
         }
         self.archetypes.push(archetype)
     }
 
     pub fn append_component<T>(&mut self, e: &EntityRef, value: T, c_type: TypedComponentRef<T>) {
         let arch_key = &self.entities.get_unchecked(e).archetype_key;
-        let arch = &mut self.archetypes.get(&arch_key);
+        let arch = self.archetypes.get_unchecked(&arch_key);
         todo!();
     }
 
     pub fn delete_entity(&mut self, e: &EntityRef) {
         let entity = self.entities.get_unchecked(&e);
         let arch = self.archetypes.get_mut_unchecked(&entity.archetype_key);
-        todo!();
+        match arch.remove_entity(entity.archetype_id) {
+            Some(moved) => {
+                self.entities.get_mut_unchecked(&moved).archetype_id = entity.archetype_id;
+            }
+            None => (),
+        }
+        self.entities.delete(&e);
     }
 
     fn copy_component_intersection(&mut self, src: &EntityRef, dst: &EntityRef) {
         let src_arch_key = self.entities.get_unchecked(src).archetype_key;
         let dst_arch_key = self.entities.get_unchecked(dst).archetype_key;
-        todo!();
-    }
-
-    fn arch_remove_entity(&mut self, arch_key: &Key<ArchetypeTag>) {
         todo!();
     }
 
@@ -150,6 +198,7 @@ impl World {
         let mut binds = Vec::new();
         for arch in self.archetypes_matching(&querry.signature.include) {
             if querry.bound_count > 0 {
+                binds.clear();
                 binds.extend(
                     querry
                         .ordered_signature
@@ -157,7 +206,7 @@ impl World {
                         .filter(|(_, bound)| *bound)
                         .map(|(comp_ref, _)| {
                             arch.signature
-                                .iter()
+                                .iter_inserted()
                                 .position(|found_ref| &found_ref == comp_ref)
                         }),
                 );
@@ -168,7 +217,7 @@ impl World {
                 signature: &arch.signature,
                 binds: &binds,
             };
-            for (idx, _) in arch.entites.iter().enumerate() {
+            for (idx, _) in arch.entities.iter().enumerate() {
                 w_ref.arch_entity_idx = idx;
                 cb(&w_ref);
             }
@@ -181,143 +230,180 @@ impl Archetype {
         Self {
             signature,
             components: Vec::new(),
-            entites: Vec::new(),
+            entities: Vec::new(),
             edges: HashMap::new(),
         }
+    }
+
+    /// Swaps the entity with the last and removes record of it.
+    /// This function does not delete any component data
+    ///
+    /// Returns: ref to the entity that is now in its place
+    ///
+    /// Panics: If invalid index is passed
+    pub(crate) fn remove_entity(&mut self, e: usize) -> Option<EntityRef> {
+        let len = self.entities.len();
+        assert!(e < len, "Invalid entity index");
+
+        if len == 1 {
+            self.entities.clear();
+            for component in &mut self.components {
+                component.get_mut().container.clear();
+            }
+            return None;
+        }
+        if e == len - 1 {
+            self.entities.pop();
+            for component in &mut self.components {
+                component.get_mut().container.pop();
+            }
+            return None;
+        }
+
+        for component in &mut self.components {
+            let com = component.get_mut();
+            com.container.swap_remove(e);
+        }
+
+        let e_moved = self
+            .entities
+            .pop()
+            .expect("There must be at least 2 entities at this point");
+        self.entities[e] = e_moved;
+        Some(e_moved)
     }
 }
 
 impl<'world> WorldRefSig<'world, '_> {
-    pub fn get_unchecked<T>(&self, component: TypedComponentRef<T>) -> &'world T {
+    pub fn get_unchecked<T: 'static>(&self, component: TypedComponentRef<T>) -> &'world T {
         let idx = self
             .signature
-            .iter()
+            .iter_inserted()
             .enumerate()
             .find(|(_, cref)| *cref == component.0)
             .unwrap()
             .0;
-        let column = unsafe { &*self.components[idx].get() };
-        let size = column.1;
 
-        let start = self.arch_entity_idx * size;
-        let end = start + size;
-        let slice = &column.0[start..end];
-
-        unsafe { &*(slice.as_ptr() as *const T) }
+        unsafe {
+            let column = &*self.components[idx].get();
+            column
+                .container
+                .get_unchecked(self.arch_entity_idx)
+                .downcast_ref_unchecked()
+        }
     }
 
-    pub fn get_mut_unchecked<T>(&self, component: TypedComponentRef<T>) -> &'world mut T {
+    pub fn get_mut_unchecked<T: 'static>(&self, component: TypedComponentRef<T>) -> &'world mut T {
         let idx = self
             .signature
-            .iter()
+            .iter_inserted()
             .enumerate()
             .find(|(_, cref)| *cref == component.0)
             .unwrap()
             .0;
-        let column = unsafe { &mut *self.components[idx].get() };
-        let size = column.1;
-        let start = self.arch_entity_idx * size;
-        let end = start + size;
-        let slice = &mut column.0[start..end];
 
-        unsafe { &mut *(slice.as_mut_ptr() as *mut T) }
+        unsafe {
+            let column = &mut *self.components[idx].get();
+            column
+                .container
+                .get_unchecked_mut(self.arch_entity_idx)
+                .downcast_mut_unchecked()
+        }
     }
 
-    pub fn get_bound_unchecked<T>(&self, typed_bind: (usize, PhantomData<T>)) -> &'world T {
-        let idx = self.binds[typed_bind.0].unwrap();
-        let column = unsafe { &*self.components[idx].get() };
-        let size = column.1;
-        let start = self.arch_entity_idx * size;
-        let end = start + size;
-        let slice = &column.0[start..end];
+    pub fn get_bound_unchecked<T: 'static>(&self, typed_bind: TypedComponentRef<T>) -> &'world T {
+        let idx = unsafe { self.binds[typed_bind.0].unwrap_unchecked() };
 
-        unsafe { &*(slice.as_ptr() as *const T) }
+        unsafe {
+            let column = &*self.components[idx].get();
+            column
+                .container
+                .get_unchecked(self.arch_entity_idx)
+                .downcast_ref_unchecked()
+        }
     }
 
-    pub fn get_mut_bound<T>(&self, typed_bind: (usize, PhantomData<T>)) -> &'world mut T {
-        let idx = self.binds[typed_bind.0].unwrap();
-        let column = unsafe { &*self.components[idx].get() };
-        let size = column.1;
-        let start = self.arch_entity_idx * size;
-        let end = start + size;
-        let slice = &column.0[start..end];
+    pub fn get_mut_bound<T: 'static>(&self, typed_bind: TypedComponentRef<T>) -> &'world mut T {
+        let idx = unsafe { self.binds[typed_bind.0].unwrap_unchecked() };
 
-        unsafe { &mut *(slice.as_ptr() as *mut T) }
+        unsafe {
+            let column = &mut *self.components[idx].get();
+            column
+                .container
+                .get_unchecked_mut(self.arch_entity_idx)
+                .downcast_mut_unchecked()
+        }
     }
 }
 
-impl<'world, 'data> EntitySpawner<'world, 'data> {
+impl<'world> EntitySpawner<'world> {
     pub fn new(world: &'world mut World) -> Self {
         Self {
+            sig: Bitset::with_capacity(world.components.len()),
             components: Vec::with_capacity(10),
             world,
+            spawned: false,
         }
     }
 
     pub fn clear(&mut self) {
         self.components.clear();
+        self.sig.zero_all();
+        self.spawned = false;
     }
 
-    pub fn component<T>(mut self, data_ref: &T, kind: TypedComponentRef<T>) -> Self {
-        assert!(
-            !self.components.iter().any(|(_, s)| *s == kind.0),
-            "A component can be assigned only once"
-        );
-
-        let bytes: &[u8] =
-            unsafe { slice::from_raw_parts(data_ref as *const T as *const u8, size_of::<T>()) };
-
-        self.components.push((bytes, kind.0));
+    pub fn component<T: 'static>(mut self, data: T, kind: TypedComponentRef<T>) -> Self {
+        if self.spawned {
+            self.clear();
+        }
+        self.sig.insert(kind.0);
+        let mut vec = AnyVec::with_capacity::<T>(1);
+        vec.push(AnyValueWrapper::new(data));
+        self.components.push((vec, kind.0));
 
         self
     }
 
     pub fn spawn(&mut self) -> EntityRef {
-        let mut impl_sig = BitSet::new();
-        for (_, com_ref) in &self.components {
-            impl_sig.insert(*com_ref);
-        }
+        self.spawned = true;
+        self.components.sort_by(|l, r| l.1.cmp(&r.1));
 
         let key = self
             .world
             .archetypes
             .iter_pairs()
-            .find(|(_, arch)| arch.signature.eq(&impl_sig))
+            .find(|(_, arch)| arch.signature.eq(&self.sig))
             .map(|(key, _)| key);
 
         match key {
             Some(key) => {
                 let arch = self.world.archetypes.get_mut_unchecked(&key);
-                for (idx, signature) in arch.signature.iter().enumerate() {
-                    let dst = unsafe { &mut *arch.components[idx].get() };
-                    let src_idx = self
-                        .components
-                        .iter()
-                        .map(|(_, sig)| sig)
-                        .position(|sig| sig == &signature)
-                        .unwrap();
-                    let src = &self.components[src_idx];
-                    assert_eq!(dst.1, src.0.len());
-                    dst.0.extend_from_slice(src.0);
+                for (idx, _) in arch.signature.iter_inserted().enumerate() {
+                    let com = arch.components[idx].get_mut();
+                    let src = &mut self.components[idx].0;
+
+                    com.container
+                        .push(src.pop().expect("Must contain exactly 1 element"))
                 }
-                let len = arch.entites.len();
+                let len = arch.entities.len();
                 return self.world.add_entity(&key, len);
             }
             None => {
-                let arch = Archetype::new_uninit(impl_sig.clone());
+                let arch = Archetype::new_uninit(self.sig.clone());
                 let arch_key = self.world.add_archetype_with_init(arch);
                 let arch = self.world.archetypes.get_mut_unchecked(&arch_key);
-                for (idx, comp_ref) in impl_sig.iter().enumerate() {
-                    let src = self
-                        .components
-                        .iter()
-                        .map(|(_, sig)| sig)
-                        .position(|comp_found| comp_found == &comp_ref)
-                        .unwrap();
-                    arch.components[idx] = UnsafeCell::new((
-                        self.components[src].0.to_vec(),
-                        self.components[src].0.len(),
-                    ));
+                for (idx, flag) in arch.signature.iter_inserted().enumerate() {
+                    let mut container = self.world.components[flag].container.clone_empty();
+                    container.push(
+                        self.components[idx]
+                            .0
+                            .pop()
+                            .expect("Must contain exactly 1 element"),
+                    );
+                    arch.components[idx] = UnsafeCell::new(ComponentData {
+                        size: self.world.components[flag].size,
+                        container,
+                    })
                 }
                 return self.world.add_entity(&arch_key, 0);
             }
@@ -326,9 +412,9 @@ impl<'world, 'data> EntitySpawner<'world, 'data> {
 }
 
 impl Querry {
-    pub fn new() -> Self {
+    pub fn new(world: &World) -> Self {
         Self {
-            signature: Default::default(),
+            signature: QuerrySignature::new(world.components.len()),
             ordered_signature: Vec::with_capacity(10),
             bound_count: 0,
         }
@@ -356,6 +442,9 @@ impl Querry {
 #[cfg(test)]
 mod tests {
     use core::panic;
+    use std::any::Any;
+
+    use any_vec::any_value::{AnyValue, AnyValueRaw, AnyValueWrapper};
 
     use crate::{EntitySpawner, Querry, World};
 
@@ -368,18 +457,18 @@ mod tests {
         let c_player_tag = world.define_component();
 
         EntitySpawner::new(&mut world)
-            .component(&(0.0, 0.0), c_position)
-            .component(&(1.1, 5.5), c_velocity)
-            .component(&(), c_player_tag)
+            .component((0.0, 0.0), c_position)
+            .component((1.1, 5.5), c_velocity)
+            .component((), c_player_tag)
             .spawn();
 
         EntitySpawner::new(&mut world)
-            .component(&(100.0, 5.0), c_position)
-            .component(&(-10.0, 0.0), c_velocity)
+            .component((100.0, 5.0), c_position)
+            .component((-10.0, 0.0), c_velocity)
             .spawn();
 
         world.run_querry(
-            &Querry::new().include(c_position).include(c_velocity),
+            &Querry::new(&world).include(c_position).include(c_velocity),
             |world| {
                 let pos = world.get_mut_unchecked(c_position);
                 let vel = world.get_unchecked(c_velocity);
@@ -388,7 +477,7 @@ mod tests {
             },
         );
         world.run_querry(
-            &Querry::new()
+            &Querry::new(&world)
                 .include(c_position)
                 .include(c_velocity)
                 .include(c_player_tag),
@@ -397,10 +486,64 @@ mod tests {
                 println!(
                     "position of an entity that is a player is: ({}, {})",
                     pos.0, pos.1
-                )
+                );
             },
         );
+    }
 
-        panic!("nothing to worry about")
+    #[test]
+    fn arch_multi_archetype_delete_every_5th() {
+        let mut world = World::new();
+
+        let c_position = world.define_component();
+        let c_velocity = world.define_component();
+        let c_player_tag = world.define_component();
+        let c_health = world.define_component();
+
+        const N: usize = 100;
+        let mut kept = Vec::new();
+
+        for i in 0..N {
+            let mut spawner = EntitySpawner::new(&mut world).component((i, 0), c_position);
+
+            if i % 2 == 0 {
+                spawner = spawner.component((1.0f32, 0.0f32), c_velocity);
+            }
+            if i % 3 == 0 {
+                spawner = spawner.component((), c_player_tag);
+            }
+            if i % 7 == 0 {
+                spawner = spawner.component(100i32, c_health);
+            }
+
+            let e = spawner.spawn();
+            if i % 5 == 0 {
+                kept.push(e);
+            }
+        }
+
+        for e in &kept {
+            world.delete_entity(e);
+        }
+
+        let expected_remaining = N - kept.len();
+        let mut count = 0;
+        world.run_querry(&Querry::new(&world), |_| {
+            count += 1;
+        });
+
+        assert_eq!(count, expected_remaining);
+        assert_eq!(world.entity_count(), expected_remaining);
+
+        let mut bind = Default::default();
+        // world.run_querry(
+        //     &Querry::new(&world).include_bind(c_position, &mut bind),
+        //     |world| print!("{:?}, ", world.get_bound_unchecked(bind)),
+        // );
+
+        world.run_querry(
+            &Querry::new(&world).include_bind(c_position, &mut bind),
+            |world| assert_ne!(world.get_bound_unchecked(bind).0 % 5, 0),
+        );
     }
 }

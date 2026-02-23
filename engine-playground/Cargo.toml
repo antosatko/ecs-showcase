@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+any_vec = "0.15.0"
 arena = { path = "../../mylibs/arena" }
-bit-set = "0.8.0"
+smallbitvec = "2.6.0"
+
+[profile.release]
+debug = true
