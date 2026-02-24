@@ -49,6 +49,10 @@ impl Bitset {
         other.iter_inserted().for_each(|n| self.insert(n));
     }
 
+    pub fn empty(&self) -> bool {
+        self.data.all_false()
+    }
+
     pub fn iter_inserted(&self) -> impl Iterator<Item = usize> {
         self.data
             .iter()

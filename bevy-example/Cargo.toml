@@ -11,7 +11,7 @@ engine-playground = { path = "../engine-playground" }
 
 [profile.release]
 lto = true
-opt-level = 3
+opt-level = 2
 codegen-units = 1
 incremental = false
 debug = true

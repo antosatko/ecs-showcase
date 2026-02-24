@@ -16,7 +16,7 @@ pub fn move_all() {
     }
 
     MeasureTask::run(
-        Some("move_all - engine"),
+        Some("move_all - my_ecs"),
         || {
             let mut world = World::new();
 

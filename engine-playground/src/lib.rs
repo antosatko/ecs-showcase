@@ -1,20 +1,7 @@
-use core::slice;
-use std::{
-    any::{Any, TypeId},
-    cell::UnsafeCell,
-    collections::HashMap,
-    marker::PhantomData,
-    mem::MaybeUninit,
-    ptr::NonNull,
-};
+use std::{cell::UnsafeCell, collections::HashMap, marker::PhantomData};
 
-use any_vec::{
-    AnyVec,
-    any_value::{AnyValue, AnyValueRaw, AnyValueTypeless, AnyValueWrapper},
-    mem::{Heap, MemBuilder},
-};
+use any_vec::{AnyVec, any_value::AnyValueWrapper};
 use arena::{Arena, DynArena, DynKey, Key};
-use smallbitvec::SmallBitVec;
 
 use crate::bitset::Bitset;
 
@@ -27,19 +14,17 @@ pub type Array = AnyVec;
 pub type ComponentId = usize;
 pub type ComponentRef = usize;
 pub type ComponentSize = usize;
-/// An ordered list of components
-pub type ExplicitSignature = Vec<ComponentRef>;
-/// An unordered list of components (ordering defaults to ComponentRef <)
-pub type ImplicitSignature = Bitset;
+pub type Signature = Bitset;
 pub type ArchetypeId = usize;
 pub type ComponentQuerry = (ComponentRef, Required, Mutability);
 pub type EntityRef = DynKey<EntityTag>;
 pub type ArrayParents = Vec<EntityRef>;
 pub type TypedComponentRef<T> = (usize, PhantomData<T>);
+pub type TypedOptComponentRef<T> = (usize, PhantomData<T>, Optional);
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Ord, Eq)]
 pub struct ArchetypeTag;
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Ord, Eq)]
 pub struct EntityTag;
 
 pub struct World {
@@ -49,7 +34,7 @@ pub struct World {
 }
 
 pub struct Archetype {
-    signature: ImplicitSignature,
+    signature: Signature,
     components: Vec<UnsafeCell<ComponentData>>,
     entities: ArrayParents,
     edges: HashMap<ComponentRef, ArcheTypeEdge>,
@@ -66,43 +51,49 @@ pub struct Entity {
 }
 
 pub struct EntitySpawner<'world> {
-    sig: ImplicitSignature,
+    sig: Signature,
     components: Vec<(AnyVec, usize)>,
     world: &'world mut World,
     spawned: bool,
 }
 
 struct ComponentData {
-    pub size: usize,
     pub container: AnyVec,
 }
 
 pub struct WorldRefSig<'world, 'querry> {
     arch_entity_idx: usize,
     components: &'world [UnsafeCell<ComponentData>],
-    signature: &'world ImplicitSignature,
+    signature: &'world Signature,
     binds: &'querry [Option<ComponentRef>],
 }
 
-#[derive(Clone, Hash, Default)]
+#[derive(Debug, Clone, Hash, Default)]
 struct QuerrySignature {
-    include: ImplicitSignature,
+    include: Signature,
+    exclude: Signature,
 }
 
 impl QuerrySignature {
     pub fn new(comps: usize) -> Self {
         Self {
             include: Bitset::with_capacity(comps),
+            exclude: Bitset::with_capacity(comps),
         }
     }
 }
 
 pub struct Querry {
     signature: QuerrySignature,
-    // <(ComponentRef, is_bound)> - this information is later
-    // used for generating the bind table
-    ordered_signature: Vec<(ComponentRef, bool)>,
-    bound_count: usize,
+    /// <(ComponentRef, is_bound)> - this information is later
+    /// used for generating the bind table
+    binds: Vec<(ComponentRef, bool)>,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl World {
@@ -120,7 +111,6 @@ impl World {
     {
         let id = self.components.len();
         self.components.push(ComponentData {
-            size: size_of::<T>(),
             container: AnyVec::new::<T>(),
         });
         (id, Default::default())
@@ -146,48 +136,50 @@ impl World {
         self.archetypes.len()
     }
 
+    pub fn component_count(&self) -> usize {
+        self.components.len()
+    }
+
     fn add_archetype_with_init(&mut self, mut archetype: Archetype) -> Key<ArchetypeTag> {
         for comp_ref in archetype.signature.iter_inserted() {
             let c_desc = &self.components[comp_ref];
             archetype.components.push(UnsafeCell::new(ComponentData {
                 container: c_desc.container.clone_empty(),
-                size: c_desc.size,
             }));
         }
         self.archetypes.push(archetype)
     }
 
-    pub fn append_component<T>(&mut self, e: &EntityRef, value: T, c_type: TypedComponentRef<T>) {
+    pub fn append_component<T>(&mut self, e: &EntityRef, _value: T, _c_type: TypedComponentRef<T>) {
         let arch_key = &self.entities.get_unchecked(e).archetype_key;
-        let arch = self.archetypes.get_unchecked(&arch_key);
+        let _arch = self.archetypes.get_unchecked(arch_key);
         todo!();
     }
 
     pub fn delete_entity(&mut self, e: &EntityRef) {
-        let entity = self.entities.get_unchecked(&e);
+        let entity = self.entities.get_unchecked(e);
         let arch = self.archetypes.get_mut_unchecked(&entity.archetype_key);
-        match arch.remove_entity(entity.archetype_id) {
-            Some(moved) => {
-                self.entities.get_mut_unchecked(&moved).archetype_id = entity.archetype_id;
-            }
-            None => (),
+        if let Some(moved) = arch.remove_entity(entity.archetype_id) {
+            self.entities.get_mut_unchecked(&moved).archetype_id = entity.archetype_id;
         }
-        self.entities.delete(&e);
+        self.entities.delete(e);
     }
 
     fn copy_component_intersection(&mut self, src: &EntityRef, dst: &EntityRef) {
-        let src_arch_key = self.entities.get_unchecked(src).archetype_key;
-        let dst_arch_key = self.entities.get_unchecked(dst).archetype_key;
+        let _src_arch_key = self.entities.get_unchecked(src).archetype_key;
+        let _dst_arch_key = self.entities.get_unchecked(dst).archetype_key;
+        debug_assert_ne!(_src_arch_key, _dst_arch_key);
         todo!();
     }
 
-    pub fn archetypes_matching<'a>(
+    fn archetypes_matching<'a>(
         &'a self,
-        signature: &ImplicitSignature,
+        q: &QuerrySignature,
     ) -> impl Iterator<Item = &'a Archetype> {
-        self.archetypes
-            .iter()
-            .filter(|arch| arch.signature.is_superset(signature))
+        self.archetypes.iter().filter(|arch| {
+            arch.signature.is_superset(&q.include)
+                && (q.exclude.empty() || !q.exclude.is_subset(&arch.signature))
+        })
     }
 
     pub fn run_querry<'world>(
@@ -196,20 +188,16 @@ impl World {
         mut cb: impl FnMut(&WorldRefSig<'world, '_>),
     ) {
         let mut binds = Vec::new();
-        for arch in self.archetypes_matching(&querry.signature.include) {
-            if querry.bound_count > 0 {
+        for arch in self.archetypes_matching(&querry.signature) {
+            if !querry.binds.is_empty() {
                 binds.clear();
-                binds.extend(
-                    querry
-                        .ordered_signature
-                        .iter()
-                        .filter(|(_, bound)| *bound)
-                        .map(|(comp_ref, _)| {
-                            arch.signature
-                                .iter_inserted()
-                                .position(|found_ref| &found_ref == comp_ref)
-                        }),
-                );
+                binds.extend(querry.binds.iter().filter(|(_, bound)| *bound).map(
+                    |(comp_ref, _)| {
+                        arch.signature
+                            .iter_inserted()
+                            .position(|found_ref| &found_ref == comp_ref)
+                    },
+                ));
             }
             let mut w_ref = WorldRefSig {
                 arch_entity_idx: 0,
@@ -226,7 +214,7 @@ impl World {
 }
 
 impl Archetype {
-    pub fn new_uninit(signature: ImplicitSignature) -> Self {
+    pub fn new_uninit(signature: Signature) -> Self {
         Self {
             signature,
             components: Vec::new(),
@@ -275,6 +263,7 @@ impl Archetype {
 }
 
 impl<'world> WorldRefSig<'world, '_> {
+    #[track_caller]
     pub fn get_unchecked<T: 'static>(&self, component: TypedComponentRef<T>) -> &'world T {
         let idx = self
             .signature
@@ -293,6 +282,7 @@ impl<'world> WorldRefSig<'world, '_> {
         }
     }
 
+    #[track_caller]
     pub fn get_mut_unchecked<T: 'static>(&self, component: TypedComponentRef<T>) -> &'world mut T {
         let idx = self
             .signature
@@ -311,6 +301,7 @@ impl<'world> WorldRefSig<'world, '_> {
         }
     }
 
+    #[track_caller]
     pub fn get_bound_unchecked<T: 'static>(&self, typed_bind: TypedComponentRef<T>) -> &'world T {
         let idx = unsafe { self.binds[typed_bind.0].unwrap_unchecked() };
 
@@ -323,6 +314,28 @@ impl<'world> WorldRefSig<'world, '_> {
         }
     }
 
+    #[track_caller]
+    pub fn get_bound_opt<T: 'static>(
+        &self,
+        typed_bind: TypedOptComponentRef<T>,
+    ) -> Option<&'world T> {
+        let idx = match self.binds[typed_bind.0] {
+            Some(i) => i,
+            None => return None,
+        };
+
+        unsafe {
+            let column = &*self.components[idx].get();
+            Some(
+                column
+                    .container
+                    .get_unchecked(self.arch_entity_idx)
+                    .downcast_ref_unchecked(),
+            )
+        }
+    }
+
+    #[track_caller]
     pub fn get_mut_bound<T: 'static>(&self, typed_bind: TypedComponentRef<T>) -> &'world mut T {
         let idx = unsafe { self.binds[typed_bind.0].unwrap_unchecked() };
 
@@ -386,7 +399,7 @@ impl<'world> EntitySpawner<'world> {
                         .push(src.pop().expect("Must contain exactly 1 element"))
                 }
                 let len = arch.entities.len();
-                return self.world.add_entity(&key, len);
+                self.world.add_entity(&key, len)
             }
             None => {
                 let arch = Archetype::new_uninit(self.sig.clone());
@@ -400,29 +413,26 @@ impl<'world> EntitySpawner<'world> {
                             .pop()
                             .expect("Must contain exactly 1 element"),
                     );
-                    arch.components[idx] = UnsafeCell::new(ComponentData {
-                        size: self.world.components[flag].size,
-                        container,
-                    })
+                    arch.components[idx] = UnsafeCell::new(ComponentData { container })
                 }
-                return self.world.add_entity(&arch_key, 0);
+                self.world.add_entity(&arch_key, 0)
             }
         }
     }
 }
 
+#[derive(Debug, Copy, Clone, Default)]
+pub struct Optional;
 impl Querry {
     pub fn new(world: &World) -> Self {
         Self {
             signature: QuerrySignature::new(world.components.len()),
-            ordered_signature: Vec::with_capacity(10),
-            bound_count: 0,
+            binds: Vec::with_capacity(10),
         }
     }
 
     pub fn include<T>(mut self, component: TypedComponentRef<T>) -> Self {
         self.signature.include.insert(component.0);
-        self.ordered_signature.push((component.0, false));
         self
     }
 
@@ -431,20 +441,30 @@ impl Querry {
         component: TypedComponentRef<T>,
         bind: &mut (usize, PhantomData<T>),
     ) -> Self {
-        *bind = (self.bound_count, Default::default());
-        self.bound_count += 1;
+        bind.0 = self.binds.len();
         self.signature.include.insert(component.0);
-        self.ordered_signature.push((component.0, true));
+        self.binds.push((component.0, true));
+        self
+    }
+
+    pub fn optional_bind<T>(
+        mut self,
+        component: TypedComponentRef<T>,
+        bind: &mut (usize, PhantomData<T>, Optional),
+    ) -> Self {
+        bind.0 = self.binds.len();
+        self.binds.push((component.0, true));
+        self
+    }
+
+    pub fn exclude<T>(mut self, component: TypedComponentRef<T>) -> Self {
+        self.signature.exclude.insert(component.0);
         self
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use core::panic;
-    use std::any::Any;
-
-    use any_vec::any_value::{AnyValue, AnyValueRaw, AnyValueWrapper};
 
     use crate::{EntitySpawner, Querry, World};
 
@@ -501,7 +521,7 @@ mod tests {
         let c_health = world.define_component();
 
         const N: usize = 100;
-        let mut kept = Vec::new();
+        let mut removed = Vec::new();
 
         for i in 0..N {
             let mut spawner = EntitySpawner::new(&mut world).component((i, 0), c_position);
@@ -518,22 +538,22 @@ mod tests {
 
             let e = spawner.spawn();
             if i % 5 == 0 {
-                kept.push(e);
+                removed.push(e);
             }
         }
 
-        for e in &kept {
+        for e in &removed {
             world.delete_entity(e);
         }
 
-        let expected_remaining = N - kept.len();
+        let expected_remaining = N - removed.len();
         let mut count = 0;
         world.run_querry(&Querry::new(&world), |_| {
             count += 1;
         });
 
-        assert_eq!(count, expected_remaining);
         assert_eq!(world.entity_count(), expected_remaining);
+        assert_eq!(count, expected_remaining);
 
         let mut bind = Default::default();
         // world.run_querry(
@@ -544,6 +564,56 @@ mod tests {
         world.run_querry(
             &Querry::new(&world).include_bind(c_position, &mut bind),
             |world| assert_ne!(world.get_bound_unchecked(bind).0 % 5, 0),
+        );
+    }
+
+    #[test]
+    fn querry() {
+        let mut world = World::new();
+
+        let c_position = world.define_component();
+        let c_velocity = world.define_component();
+        let c_player_tag = world.define_component();
+        let c_health = world.define_component();
+
+        const N: usize = 100;
+
+        for i in 0..N {
+            let mut spawner = EntitySpawner::new(&mut world).component((i, 0), c_position);
+
+            if i % 2 == 0 {
+                spawner = spawner.component((1.0f32, 0.0f32), c_velocity);
+            }
+            if i % 3 == 0 {
+                spawner = spawner.component((), c_player_tag);
+            }
+            if i % 7 == 0 {
+                spawner = spawner.component(100i32, c_health);
+            }
+
+            spawner.spawn();
+        }
+
+        let mut b_position = Default::default();
+        let mut b_velocity = Default::default();
+
+        world.run_querry(
+            &Querry::new(&world)
+                .include_bind(c_position, &mut b_position)
+                .exclude(c_velocity),
+            |world| assert_ne!(world.get_bound_unchecked(b_position).0 % 2, 0),
+        );
+
+        world.run_querry(
+            &Querry::new(&world)
+                .include_bind(c_position, &mut b_position)
+                .optional_bind(c_velocity, &mut b_velocity),
+            |world| {
+                assert_eq!(
+                    world.get_bound_unchecked(b_position).0 % 2 == 0,
+                    world.get_bound_opt(b_velocity).is_some()
+                );
+            },
         );
     }
 }

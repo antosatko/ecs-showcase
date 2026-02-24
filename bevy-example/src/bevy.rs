@@ -31,7 +31,7 @@ pub fn move_all() {
     }
 
     MeasureTask::run(
-        Some("move_all - ecs"),
+        Some("move_all - bevy"),
         || {
             let mut world = World::new();
             let mut schedule = Schedule::default();
