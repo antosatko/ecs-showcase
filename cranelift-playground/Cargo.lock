@@ -360,6 +360,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lang_ir"
+version = "0.1.0"
+dependencies = [
+ "arena",
+ "smol_str",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -462,6 +470,7 @@ name = "ruparse-playground"
 version = "0.1.0"
 dependencies = [
  "arena",
+ "lang_ir",
  "ruparse",
  "smol_str",
 ]

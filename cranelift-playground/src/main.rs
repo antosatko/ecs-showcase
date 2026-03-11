@@ -1,5 +1,5 @@
 use cranelift::{codegen::Context, module::Module, prelude::types};
-use ruparse_playground::{grammar::gen_parser, ir};
+use ruparse_playground::{grammar::gen_parser, ruparse_lowering};
 
 use crate::jit_bldr::{IrGen, params};
 

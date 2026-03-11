@@ -5,7 +5,6 @@ use ruparse::parser::Nodes;
 use crate::ruparse_lowering::module_named;
 
 mod grammar;
-mod ir;
 mod ruparse_lowering;
 
 const TXT: &'static str = include_str!("lang");
@@ -55,8 +54,10 @@ fn main() {
                     }
                     println!("function {}", ident.inner);
                     println!("param count: {}", parameters.len());
-                    println!("has return type: {}", return_type.is_some());
-                    println!("body len: {}", body.inner.statements.len());
+                    if let Some(return_type) = return_type {
+                        println!("return type: {:?}", return_type.inner);
+                    }
+                    println!("body len: {}", body.statements.len());
                 }
             }
         }

@@ -69,6 +69,11 @@ impl Bitset {
     pub fn is_superset(&self, other: &Self) -> bool {
         other.is_subset(self)
     }
+
+    pub fn count_predecesors(&self, n: usize) -> Option<usize> {
+        self.get(n)
+            .then(|| self.iter_inserted().take_while(|m| *m < n).count())
+    }
 }
 #[cfg(test)]
 pub mod tests {

@@ -361,3 +361,19 @@ pub enum ExprItem {
     Value(Expression),
     Operator(Operator),
 }
+
+/* ================ DEBUG ============ */
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut n = 0;
+        for txt in self.path.inner.path.iter().map(|a| &a.inner) {
+            if n > 0 {
+                write!(f, "::")?;
+            }
+            n += 1;
+            write!(f, "{}", txt)?;
+        }
+        Ok(())
+    }
+}

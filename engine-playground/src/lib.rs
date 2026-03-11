@@ -1,6 +1,9 @@
 use std::{cell::UnsafeCell, collections::HashMap, marker::PhantomData};
 
-use any_vec::{AnyVec, any_value::AnyValueWrapper};
+use any_vec::{
+    AnyVec,
+    any_value::{AnyValueMut, AnyValueSizeless, AnyValueTypelessMut, AnyValueWrapper},
+};
 use arena::{Arena, DynArena, DynKey, Key};
 
 use crate::bitset::Bitset;
@@ -41,8 +44,8 @@ pub struct Archetype {
 }
 
 pub struct ArcheTypeEdge {
-    next: Option<Key<Archetype>>,
-    prev: Option<Key<Archetype>>,
+    next: Option<Key<ArchetypeTag>>,
+    prev: Option<Key<ArchetypeTag>>,
 }
 
 pub struct Entity {
@@ -150,10 +153,72 @@ impl World {
         self.archetypes.push(archetype)
     }
 
-    pub fn append_component<T>(&mut self, e: &EntityRef, _value: T, _c_type: TypedComponentRef<T>) {
-        let arch_key = &self.entities.get_unchecked(e).archetype_key;
-        let _arch = self.archetypes.get_unchecked(arch_key);
-        todo!();
+    pub fn append_component<T: 'static>(
+        &mut self,
+        e: &EntityRef,
+        value: T,
+        c_type: TypedComponentRef<T>,
+    ) {
+        let arche = self.find_archetype_mut(e);
+        let next = if let Some(ArcheTypeEdge {
+            next: Some(next),
+            prev: _,
+        }) = arche.edges.get(&c_type.0)
+        {
+            *next
+        } else {
+            let mut signature = arche.signature.clone();
+            signature.insert(c_type.0);
+            let key = self.find_or_crate_archetype(signature);
+            let arche = self.find_archetype_mut(e);
+            match arche.edges.get_mut(&c_type.0) {
+                Some(ArcheTypeEdge { next, prev: _ }) => *next = Some(key),
+                None => drop(arche.edges.insert(
+                    c_type.0,
+                    ArcheTypeEdge {
+                        next: Some(key),
+                        prev: None,
+                    },
+                )),
+            }
+            key
+        };
+        self.relocate_components(e, &next);
+        let arche = self.find_archetype_mut(e);
+        let any_val = AnyValueWrapper::new(value);
+        let local_idx = arche
+            .signature
+            .count_predecesors(c_type.0)
+            .expect("Component was just added to signature, it must exist");
+
+        arche.components[local_idx]
+            .get_mut()
+            .container
+            .push(any_val);
+    }
+
+    fn find_or_crate_archetype(&mut self, signature: Signature) -> Key<ArchetypeTag> {
+        if let Some((key, _)) = &self
+            .archetypes
+            .iter_pairs()
+            .find(|(_, a)| a.signature == signature)
+        {
+            *key
+        } else {
+            let archetype = Archetype::new_uninit(signature);
+            self.add_archetype_with_init(archetype)
+        }
+    }
+
+    fn find_signature(&self, e: &EntityRef) -> &Signature {
+        let entity = &self.entities.get_unchecked(e);
+        let arch = &self.archetypes.get_unchecked(&entity.archetype_key);
+        &arch.signature
+    }
+
+    fn find_archetype_mut(&mut self, e: &EntityRef) -> &mut Archetype {
+        let entity = &self.entities.get_unchecked(e);
+        self.archetypes.get_mut_unchecked(&entity.archetype_key)
     }
 
     pub fn delete_entity(&mut self, e: &EntityRef) {
@@ -165,11 +230,40 @@ impl World {
         self.entities.delete(e);
     }
 
-    fn copy_component_intersection(&mut self, src: &EntityRef, dst: &EntityRef) {
-        let _src_arch_key = self.entities.get_unchecked(src).archetype_key;
-        let _dst_arch_key = self.entities.get_unchecked(dst).archetype_key;
-        debug_assert_ne!(_src_arch_key, _dst_arch_key);
-        todo!();
+    fn relocate_components(&mut self, src: &EntityRef, dst: &Key<ArchetypeTag>) {
+        let src_arch_key = self.entities.get_unchecked(src).archetype_key;
+
+        let [src_arch, dst_arch] = unsafe {
+            self.archetypes
+                .get_disj_unchecked_mut([&src_arch_key, &dst])
+        };
+
+        let src_entity = self.entities.get_unchecked(src).archetype_id;
+
+        for (src_idx, component) in src_arch.signature.iter_inserted().enumerate() {
+            let src_container = &mut src_arch.components[src_idx].get_mut().container;
+            let value = src_container.swap_remove(src_entity);
+
+            if let Some(dst_idx) = dst_arch.signature.count_predecesors(component) {
+                let dst_container = &mut dst_arch.components[dst_idx].get_mut().container;
+
+                dst_container.push(value);
+            }
+        }
+        let swapped = src_arch
+            .entities
+            .pop()
+            .expect("There must be at least two at this point");
+        if src_arch.entities.len() != src_entity {
+            let src_entity_record = &mut self.entities.get_mut_unchecked(&swapped);
+            src_entity_record.archetype_id = src_entity;
+            src_arch.entities[src_entity] = swapped;
+        }
+        let entity_record = &mut self.entities.get_mut_unchecked(src);
+        entity_record.archetype_key = *dst;
+        entity_record.archetype_id = dst_arch.entities.len();
+
+        dst_arch.entities.push(*src);
     }
 
     fn archetypes_matching<'a>(
@@ -502,13 +596,55 @@ mod tests {
                 .include(c_velocity)
                 .include(c_player_tag),
             |world| {
-                let pos = world.get_unchecked(c_position);
-                println!(
-                    "position of an entity that is a player is: ({}, {})",
-                    pos.0, pos.1
-                );
+                let pos = *world.get_unchecked(c_position);
+                assert_eq!(pos, (1.1, 5.5));
             },
         );
+    }
+
+    #[test]
+    fn append() {
+        let mut world = World::new();
+
+        let c_position = world.define_component();
+        let c_velocity = world.define_component();
+        let c_player_tag = world.define_component();
+
+        EntitySpawner::new(&mut world)
+            .component((0.0, 0.0), c_position)
+            .component((1.1, 5.5), c_velocity)
+            .component((), c_player_tag)
+            .spawn();
+
+        let e2 = EntitySpawner::new(&mut world)
+            .component((100.0, 5.0), c_position)
+            .component((-10.0, 0.0), c_velocity)
+            .spawn();
+
+        world.append_component(&e2, (), c_player_tag);
+
+        let mut count = 0;
+        world.run_querry(
+            &Querry::new(&world)
+                .include(c_position)
+                .include(c_velocity)
+                .include(c_player_tag),
+            |_| {
+                count += 1;
+            },
+        );
+        assert_eq!(count, 2);
+        let mut count = 0;
+        world.run_querry(
+            &Querry::new(&world)
+                .include(c_position)
+                .include(c_velocity)
+                .exclude(c_player_tag),
+            |_| {
+                count += 1;
+            },
+        );
+        assert_eq!(count, 0);
     }
 
     #[test]

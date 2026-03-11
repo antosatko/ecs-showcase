@@ -19,30 +19,32 @@ scheduler main {
 function danda(abc: std::sfdg, asd: int,): int {
     syadf = ##"  "#"  \u{67} "##
     var danda: eee = '\t'
-    
+
     var arr = [1, 2, 3, '\u{1222}', #"danmda\"#  f "#]
     danda.dfgsd(ad,aa,)[0b101101]
     return sedm
     outer: loop {
         // bla bla bla
         var danda = 6.7f32
-        var danda = a.nevim.**&[8]()  
+        var danda = a.nevim.**&[8]()
         inner: loop{}
         var danda = 8;
 
         if true {
             while true {
-                
+
             }
         }else if a {} else if b {
-            
+
         }else {
-            
+
         }
-    
+
         nevim: break
     }
 }
+
+function returnType(): bla::bla::bla {}
 
 function test_strings() {
     var normal = "hello world";
