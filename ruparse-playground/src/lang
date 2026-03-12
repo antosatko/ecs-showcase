@@ -1,5 +1,7 @@
-//! This file is a dev playground for the parser
-//! for resources on this language look elsewhere
+function a (): a{}
+
+// This file is a dev playground for the parser
+// for resources on this language look elsewhere
 
 
 /// Main scheduler

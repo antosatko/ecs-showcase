@@ -570,14 +570,25 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .options([field, call, indexing, refs])
         .build();
 
+    let unary_operators = parser
+        .grammar
+        .new_enum("unary operator")
+        .options([token("-"), token("!")])
+        .build();
+
     let value = parser
         .grammar
         .new_node("value")
         .rules([
+            while_(unary_operators).set("unary operators"),
             is(literals).commit().set("literal"),
             while_(value_tails).set("tail"),
         ])
-        .variables([node_var("literal"), list_var("tail")])
+        .variables([
+            node_var("literal"),
+            list_var("tail"),
+            list_var("unary operators"),
+        ])
         .build();
 
     let expression = parser

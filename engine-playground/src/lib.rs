@@ -1,9 +1,6 @@
 use std::{cell::UnsafeCell, collections::HashMap, marker::PhantomData};
 
-use any_vec::{
-    AnyVec,
-    any_value::{AnyValueMut, AnyValueSizeless, AnyValueTypelessMut, AnyValueWrapper},
-};
+use any_vec::{AnyVec, any_value::AnyValueWrapper};
 use arena::{Arena, DynArena, DynKey, Key};
 
 use crate::bitset::Bitset;
@@ -30,12 +27,14 @@ pub struct ArchetypeTag;
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Ord, Eq)]
 pub struct EntityTag;
 
+#[derive(Debug)]
 pub struct World {
     pub entities: DynArena<Entity, EntityTag>,
     pub archetypes: Arena<Archetype, ArchetypeTag>,
     components: Vec<ComponentData>,
 }
 
+#[derive(Debug)]
 pub struct Archetype {
     signature: Signature,
     components: Vec<UnsafeCell<ComponentData>>,
@@ -43,16 +42,19 @@ pub struct Archetype {
     edges: HashMap<ComponentRef, ArcheTypeEdge>,
 }
 
+#[derive(Debug)]
 pub struct ArcheTypeEdge {
     next: Option<Key<ArchetypeTag>>,
     prev: Option<Key<ArchetypeTag>>,
 }
 
+#[derive(Debug)]
 pub struct Entity {
     pub archetype_key: Key<ArchetypeTag>,
     pub archetype_id: ArchetypeId,
 }
 
+#[derive(Debug)]
 pub struct EntitySpawner<'world> {
     sig: Signature,
     components: Vec<(AnyVec, usize)>,
@@ -60,10 +62,12 @@ pub struct EntitySpawner<'world> {
     spawned: bool,
 }
 
+#[derive(Debug)]
 struct ComponentData {
     pub container: AnyVec,
 }
 
+#[derive(Debug)]
 pub struct WorldRefSig<'world, 'querry> {
     arch_entity_idx: usize,
     components: &'world [UnsafeCell<ComponentData>],
@@ -159,6 +163,31 @@ impl World {
         value: T,
         c_type: TypedComponentRef<T>,
     ) {
+        let next = self.arch_next_edge(e, c_type);
+        self.relocate_components(e, &next);
+        let arche = self.find_archetype_mut(e);
+        let any_val = AnyValueWrapper::new(value);
+        let local_idx = arche
+            .signature
+            .count_predecesors(c_type.0)
+            .expect("Component was just added to signature, it must exist");
+
+        arche.components[local_idx]
+            .get_mut()
+            .container
+            .push(any_val);
+    }
+
+    pub fn remove_component<T>(&mut self, e: &EntityRef, c_type: TypedComponentRef<T>) {
+        let prev = self.arch_prev_edge(e, c_type);
+        self.relocate_components(e, &prev);
+    }
+
+    fn arch_next_edge<T>(
+        &mut self,
+        e: &DynKey<EntityTag>,
+        c_type: (usize, PhantomData<T>),
+    ) -> Key<ArchetypeTag> {
         let arche = self.find_archetype_mut(e);
         let next = if let Some(ArcheTypeEdge {
             next: Some(next),
@@ -183,18 +212,39 @@ impl World {
             }
             key
         };
-        self.relocate_components(e, &next);
-        let arche = self.find_archetype_mut(e);
-        let any_val = AnyValueWrapper::new(value);
-        let local_idx = arche
-            .signature
-            .count_predecesors(c_type.0)
-            .expect("Component was just added to signature, it must exist");
+        next
+    }
 
-        arche.components[local_idx]
-            .get_mut()
-            .container
-            .push(any_val);
+    fn arch_prev_edge<T>(
+        &mut self,
+        e: &DynKey<EntityTag>,
+        c_type: (usize, PhantomData<T>),
+    ) -> Key<ArchetypeTag> {
+        let arche = self.find_archetype_mut(e);
+        let prev = if let Some(ArcheTypeEdge {
+            next: _,
+            prev: Some(prev),
+        }) = arche.edges.get(&c_type.0)
+        {
+            *prev
+        } else {
+            let mut signature = arche.signature.clone();
+            signature.remove(c_type.0);
+            let key = self.find_or_crate_archetype(signature);
+            let arche = self.find_archetype_mut(e);
+            match arche.edges.get_mut(&c_type.0) {
+                Some(ArcheTypeEdge { next: _, prev }) => *prev = Some(key),
+                None => drop(arche.edges.insert(
+                    c_type.0,
+                    ArcheTypeEdge {
+                        next: None,
+                        prev: Some(key),
+                    },
+                )),
+            }
+            key
+        };
+        prev
     }
 
     fn find_or_crate_archetype(&mut self, signature: Signature) -> Key<ArchetypeTag> {
@@ -208,12 +258,6 @@ impl World {
             let archetype = Archetype::new_uninit(signature);
             self.add_archetype_with_init(archetype)
         }
-    }
-
-    fn find_signature(&self, e: &EntityRef) -> &Signature {
-        let entity = &self.entities.get_unchecked(e);
-        let arch = &self.archetypes.get_unchecked(&entity.archetype_key);
-        &arch.signature
     }
 
     fn find_archetype_mut(&mut self, e: &EntityRef) -> &mut Archetype {
@@ -233,10 +277,8 @@ impl World {
     fn relocate_components(&mut self, src: &EntityRef, dst: &Key<ArchetypeTag>) {
         let src_arch_key = self.entities.get_unchecked(src).archetype_key;
 
-        let [src_arch, dst_arch] = unsafe {
-            self.archetypes
-                .get_disj_unchecked_mut([&src_arch_key, &dst])
-        };
+        let [src_arch, dst_arch] =
+            unsafe { self.archetypes.get_disj_unchecked_mut([&src_arch_key, dst]) };
 
         let src_entity = self.entities.get_unchecked(src).archetype_id;
 
@@ -413,10 +455,7 @@ impl<'world> WorldRefSig<'world, '_> {
         &self,
         typed_bind: TypedOptComponentRef<T>,
     ) -> Option<&'world T> {
-        let idx = match self.binds[typed_bind.0] {
-            Some(i) => i,
-            None => return None,
-        };
+        let idx = self.binds[typed_bind.0]?;
 
         unsafe {
             let column = &*self.components[idx].get();
@@ -603,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn append() {
+    fn append_remove_component() {
         let mut world = World::new();
 
         let c_position = world.define_component();
@@ -645,6 +684,14 @@ mod tests {
             },
         );
         assert_eq!(count, 0);
+
+        world.remove_component(&e2, c_position);
+
+        let mut count = 0;
+        world.run_querry(&Querry::new(&world).exclude(c_position), |_| {
+            count += 1;
+        });
+        assert_eq!(count, 1);
     }
 
     #[test]

@@ -415,7 +415,7 @@ fn docstrings(src: &str, node: &Nodes) -> Vec<Span<SmolStr>> {
 
 pub fn span<T>(v: T, node: &Nodes) -> Span<T> {
     let index = node.str_idx();
-    let len = index - node.str_last_idx();
+    let len = node.str_last_idx() - index;
     Span::new(v, SpanIndex { index, len })
 }
 pub fn span_from_node<T>(v: T, node: &Node) -> Span<T> {
