@@ -8,12 +8,13 @@ use ruparse::{
 use smol_str::SmolStr;
 
 use lang_ir::ast::{
-    Associativity, Block, ExprItem, Expression, Function, IdentifierPath, Literal, Module, Object,
-    Operator, Parameter, Span, SpanIndex, Statement, Type, Value, char_literal, numeric_literal,
-    string_literal,
+    Associativity, Body, Else, ElseIf, ExprItem, Expression, Function, IdentifierPath, Literal,
+    Module, Object, Operator, Parameter, Span, SpanIndex, Statement, Type, Value, char_literal,
+    numeric_literal, string_literal,
 };
 
-pub fn module_named(name: impl Into<SmolStr>, src: &str, node: &Nodes) -> Module {
+pub fn module_named(name: impl Into<SmolStr>, src: &str, node: Node) -> Module {
+    let node = &Nodes::Node(node);
     let mut module = Module {
         name: name.into(),
         docs: docstrings(src, node),
@@ -57,7 +58,7 @@ pub fn module_named(name: impl Into<SmolStr>, src: &str, node: &Nodes) -> Module
                 let ident = expect_ident(src, s);
                 let params = parameters(src, s.expect_node("parameters"));
                 let return_type = s.try_get_node("return type").as_ref().map(|t| ty(src, t));
-                let body = block(src, s.expect_node("code block"));
+                let body = body(src, s.expect_node("code body"));
                 let docs = docstrings(src, s);
 
                 let obj = Object::Function(Function {
@@ -79,7 +80,26 @@ pub fn module_named(name: impl Into<SmolStr>, src: &str, node: &Nodes) -> Module
     module
 }
 
-fn block(src: &str, node: &Nodes) -> Span<Block> {
+fn body(src: &str, node: &Nodes) -> Span<Body> {
+    span(
+        match node.get_name() {
+            "code block" => Body::Block(block(src, node)),
+            "code statement" => Body::Statement(expression(
+                src,
+                node.try_get_node("expression")
+                    .as_ref()
+                    .unwrap()
+                    .try_get_node("expression")
+                    .as_ref()
+                    .unwrap(),
+            )),
+            other => unreachable!("expected code block or statement, got: {other}"),
+        },
+        node,
+    )
+}
+
+fn block(src: &str, node: &Nodes) -> Vec<Span<Statement>> {
     let mut statements = Vec::new();
 
     for stmt_node in node.get_list("statements") {
@@ -109,7 +129,7 @@ fn block(src: &str, node: &Nodes) -> Span<Block> {
 
             "loop" => {
                 let label = try_label(src, stmt_node);
-                let body = block(src, stmt_node.expect_node("code block"));
+                let body = body(src, stmt_node.expect_node("code body"));
                 span(Statement::Loop { label, body }, stmt_node)
             }
 
@@ -134,19 +154,23 @@ fn block(src: &str, node: &Nodes) -> Span<Block> {
 
             "if" => {
                 let condition = expression(src, stmt_node.expect_node("expression"));
-                let then_block = block(src, stmt_node.expect_node("code block"));
+                let then_block = body(src, stmt_node.expect_node("code body"));
 
                 let mut else_if = Vec::new();
                 for elif in stmt_node.get_list("else if") {
-                    let cond = expression(src, elif.expect_node("expression"));
-                    let block = block(src, elif.expect_node("code block"));
-                    else_if.push((cond, block));
+                    let condition = expression(src, elif.expect_node("expression"));
+                    let block = body(src, elif.expect_node("code body"));
+                    else_if.push(span(ElseIf { condition, block }, elif));
                 }
 
-                let else_block = stmt_node
-                    .try_get_node("else")
-                    .as_ref()
-                    .map(|e| block(src, e.expect_node("code block")));
+                let else_block = stmt_node.try_get_node("else").as_ref().map(|e| {
+                    span(
+                        Else {
+                            block: body(src, e.expect_node("code body")),
+                        },
+                        e,
+                    )
+                });
 
                 span(
                     Statement::If {
@@ -162,7 +186,7 @@ fn block(src: &str, node: &Nodes) -> Span<Block> {
             "while" => {
                 let label = try_label(src, stmt_node);
                 let condition = expression(src, stmt_node.expect_node("expression"));
-                let body = block(src, stmt_node.expect_node("code block"));
+                let body = body(src, stmt_node.expect_node("code body"));
 
                 span(
                     Statement::While {
@@ -180,7 +204,7 @@ fn block(src: &str, node: &Nodes) -> Span<Block> {
         statements.push(stmt);
     }
 
-    span(Block { statements }, node)
+    statements
 }
 
 #[track_caller]

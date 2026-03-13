@@ -103,7 +103,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let mut parser = Parser::new();
 
     parser.lexer.add_tokens(
-        "+ - * / \\ ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , == != += -= *= /= %= && || >= <= #"
+        "+ - * / \\ ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , # == != += -= *= /= %= && || >= <= =>"
             .split_whitespace(),
     );
     parser.lexer.preprocessors.push(|src, tokens| {
@@ -180,7 +180,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                             }
                             let tok = Token {
                                 index: tokens[start].index,
-                                len: tokens[i].index - tokens[start].index,
+                                len: tokens[i].index - tokens[start].index - 1,
                                 location: tokens[start].location,
                                 kind: TokenKinds::Complex("docstr"),
                             };
@@ -198,7 +198,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                             }
                             let tok = Token {
                                 index: tokens[start].index,
-                                len: tokens[i].index - tokens[start].index,
+                                len: tokens[i].index - tokens[start].index - 1,
                                 location: tokens[start].location,
                                 kind: TokenKinds::Complex("tl docstr"),
                             };
@@ -427,6 +427,24 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         )
         .build();
 
+    let delimiters_peek_enum = parser
+        .grammar
+        .new_enum("delimiters")
+        .options(") ] }".split_whitespace().map(|c| token(c)))
+        .build();
+
+    let delimiters_peek = parser
+        .grammar
+        .new_node("delimiter")
+        .rules([peek(delimiters_peek_enum)])
+        .build();
+
+    let delimiters_consume = parser
+        .grammar
+        .new_enum("terminator")
+        .options([token(";"), newline()])
+        .build();
+
     let docstr = parser
         .grammar
         .new_node("doc string")
@@ -606,8 +624,10 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let end_stmt = parser
         .grammar
         .new_node("end statement")
-        .rules([is_one_of([option(newline()), option(token(";"))])
-            .hint("Expected to end statement on a new line or semicolon")])
+        .rules([
+            is_one_of([option(delimiters_consume), option(delimiters_peek)])
+                .hint("Expected to end statement on a delimiter"),
+        ])
         .build();
 
     let type_ = parser
@@ -620,7 +640,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
     let label = parser
         .grammar
         .new_node("label")
-        .rules([is(ident).set(IDENTIFIER), is(token(":"))])
+        .rules([is(ident).set(IDENTIFIER).start(), is(token(":"))])
         .variables([IDENTIFIER_VAR])
         .build();
 
@@ -688,14 +708,14 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .grammar
         .new_node("continue")
         .maybe_has(label, "label")
-        .rules([is(keyword("continue"))])
+        .rules([is(keyword("continue")).start()])
         .build();
 
     let break_st = parser
         .grammar
         .new_node("break")
         .maybe_has(label, "label")
-        .rules([is(keyword("break"))])
+        .rules([is(keyword("break")).start()])
         .build();
 
     let code_block = parser
@@ -707,9 +727,25 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                 option(enumerator("statement")).set("statements"),
                 option(token("}")).return_node(),
             ])
-            .hint("Potentially unclosed code block")]),
+            .hint("Potentially unclosed code body")]),
         ])
         .variables([list_var("statements")])
+        .build();
+
+    let code_expression = parser
+        .grammar
+        .new_node("code statement")
+        .rules([
+            is(token("=>")).commit(),
+            is(expression_st).set("expression"),
+        ])
+        .variables([node_var("expression")])
+        .build();
+
+    let code_body = parser
+        .grammar
+        .new_enum("code body")
+        .options([code_block, code_expression])
         .build();
 
     let loop_st = parser
@@ -717,10 +753,10 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .new_node("loop")
         .maybe_has(label, "label")
         .rules([
-            is(keyword("loop")).commit(),
-            is(code_block).set("code block"),
+            is(keyword("loop")).commit().start(),
+            is(code_body).set("code body"),
         ])
-        .variables([node_var("code block")])
+        .variables([node_var("code body")])
         .build();
 
     let else_if_st = parser
@@ -730,19 +766,16 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             is(keyword("else")),
             is(keyword("if")).commit(),
             is(expression).set("expression"),
-            is(code_block).set("code block"),
+            is(code_body).set("code body"),
         ])
-        .variables([node_var("expression"), node_var("code block")])
+        .variables([node_var("expression"), node_var("code body")])
         .build();
 
     let else_st = parser
         .grammar
         .new_node("else")
-        .rules([
-            is(keyword("else")).commit(),
-            is(code_block).set("code block"),
-        ])
-        .variables([node_var("code block")])
+        .rules([is(keyword("else")).commit(), is(code_body).set("code body")])
+        .variables([node_var("code body")])
         .build();
 
     let if_st = parser
@@ -751,13 +784,13 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .rules([
             is(keyword("if")).commit(),
             is(expression).set("expression"),
-            is(code_block).set("code block"),
+            is(code_body).set("code body"),
             while_(else_if_st).set("else if"),
             maybe(else_st).set("else"),
         ])
         .variables([
             node_var("expression"),
-            node_var("code block"),
+            node_var("code body"),
             list_var("else if"),
             node_var("else"),
         ])
@@ -768,15 +801,15 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .new_node("while")
         .maybe_has(label, "label")
         .rules([
-            is(keyword("while")).commit(),
+            is(keyword("while")).commit().start(),
             is(expression).set("expression"),
-            is(code_block).set("code block"),
+            is(code_body).set("code body"),
         ])
-        .variables([node_var("expression"), node_var("code block")])
+        .variables([node_var("expression"), node_var("code body")])
         .build();
 
     // references
-    let _ = code_block;
+    let _ = code_body;
     let _statements = parser
         .grammar
         .new_enum("statement")
@@ -801,13 +834,15 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
             is(ident).set(IDENTIFIER),
             is(parameter_list).set("parameters"),
             maybe(token(":")).then([is(type_).set("return type")]),
-            is(code_block).set("code block"),
+            is(code_body)
+                .set("code body")
+                .hint("A function must contain a code body"),
         ])
         .variables([
             IDENTIFIER_VAR,
             node_var("parameters"),
             node_var("return type"),
-            node_var("code block"),
+            node_var("code body"),
         ])
         .build();
 
@@ -854,10 +889,24 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
         .variables([IDENTIFIER_VAR, node_var("resources"), node_var("systems")])
         .build();
 
+    let system = parser
+        .grammar
+        .new_node("system")
+        .has(docstr, "docs")
+        .rules([
+            is(keyword("system")).commit().start(),
+            is(ident).set(IDENTIFIER),
+            is(code_body)
+                .set("code body")
+                .hint("A system must contain a code body"),
+        ])
+        .variables([IDENTIFIER_VAR, node_var("code body")])
+        .build();
+
     let tls = parser
         .grammar
         .new_enum("top level statement")
-        .options([scheduler, function])
+        .options([scheduler, function, system])
         .build();
 
     parser

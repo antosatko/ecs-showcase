@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use ruparse::parser::Nodes;
-
 use crate::ruparse_lowering::module_named;
 
 mod grammar;
 mod ruparse_lowering;
+
+pub use lang_ir::ast;
 
 const TXT: &'static str = include_str!("lang");
 
@@ -27,7 +27,7 @@ fn main() {
     let result = parser.parse(&tokens, TXT);
     match result {
         Ok(result) => {
-            let module = module_named("lang", TXT, &Nodes::Node(result.entry));
+            let module = module_named("lang", TXT, result.entry);
 
             println!();
             for doc in module.docs {
@@ -57,7 +57,7 @@ fn main() {
                     if let Some(return_type) = return_type {
                         println!("return type: {:?}", return_type.inner);
                     }
-                    println!("body len: {}", body.statements.len());
+                    println!("body len: {}", body.inner.len());
                 }
             }
         }

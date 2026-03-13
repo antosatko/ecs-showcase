@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
@@ -77,11 +78,17 @@ pub struct Function {
     pub ident: Span<SmolStr>,
     pub parameters: Vec<Span<Parameter>>,
     pub return_type: Option<Span<Type>>,
-    pub body: Span<Block>,
+    pub body: Span<Body>,
     pub docs: Vec<Span<SmolStr>>,
 }
 
 /* ===================== BLOCK / STATEMENTS ===================== */
+
+#[derive(Debug, Clone)]
+pub enum Body {
+    Block(Vec<Span<Statement>>),
+    Statement(Span<Expression>),
+}
 
 #[derive(Debug, Clone)]
 pub struct Block {
@@ -109,7 +116,7 @@ pub enum Statement {
 
     Loop {
         label: Option<Span<SmolStr>>,
-        body: Span<Block>,
+        body: Span<Body>,
     },
 
     Expr {
@@ -118,16 +125,27 @@ pub enum Statement {
 
     If {
         condition: Span<Expression>,
-        then_block: Span<Block>,
-        else_if: Vec<(Span<Expression>, Span<Block>)>,
-        else_block: Option<Span<Block>>,
+        then_block: Span<Body>,
+        else_if: Vec<Span<ElseIf>>,
+        else_block: Option<Span<Else>>,
     },
 
     While {
         label: Option<Span<SmolStr>>,
         condition: Span<Expression>,
-        body: Span<Block>,
+        body: Span<Body>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct ElseIf {
+    pub condition: Span<Expression>,
+    pub block: Span<Body>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Else {
+    pub block: Span<Body>,
 }
 
 /* ===================== PARAMETERS ===================== */
@@ -241,27 +259,40 @@ pub enum NumberValue {
 }
 
 /* ====================== LOWERING =====================*/
+
 pub fn numeric_literal(s: &str) -> Number {
+    let (s, radix) = if s.starts_with("0x") {
+        (&s[2..], 16)
+    } else if s.starts_with("0b") {
+        (&s[2..], 2)
+    } else if s.starts_with("0o") {
+        (&s[2..], 8)
+    } else {
+        (s, 10)
+    };
+
     let s = s.replace('_', "");
 
-    let is_float = s.contains('.') || s.contains('f') || s.contains('F');
+    let is_float = radix == 10 && (s.contains('.') || s.contains('f') || s.contains('F'));
 
-    let (num_str, suffix) =
-        if let Some((num, suff)) = s.rsplit_once(|c: char| c.is_ascii_alphabetic()) {
-            (num, Some(suff))
-        } else {
-            (&s[..], None)
-        };
+    let (num_str, suffix) = if let Some(pos) =
+        s.find(|c: char| c.is_ascii_alphabetic() && !(radix == 16 && c.is_ascii_hexdigit()))
+    {
+        (&s[..pos], Some(&s[pos..]))
+    } else {
+        (&s[..], None)
+    };
 
     if is_float {
         let value: f64 = num_str.parse().unwrap();
-        let size = suffix.map(|s| s.parse().ok()).flatten();
+        let size = suffix.and_then(|s| s.parse().ok());
         Number {
             value: NumberValue::Float(value),
             size,
         }
     } else {
-        let value: i128 = num_str.parse().unwrap();
+        let value = i128::from_str_radix(num_str, radix).expect(num_str);
+
         let (number_value, size) = match suffix.map(|s| s.to_lowercase()) {
             Some(ref s) if s.starts_with('u') => {
                 let size = s[1..].parse().ok();
@@ -291,7 +322,11 @@ pub fn float_literal(s: &str) -> NumberValue {
 pub fn char_literal(s: &str) -> char {
     if s.starts_with(r"'\u{") {
         let unicode = s.trim_start_matches(r"'\u{").trim_end_matches("}'");
-        char::from_u32(unicode.replace("_", "").parse::<u32>().unwrap()).unwrap()
+        match numeric_literal(unicode).value {
+            NumberValue::Uint(n) => char::from_u32(n as _).unwrap(),
+            NumberValue::Number(n) => char::from_u32(n as _).unwrap(),
+            num => panic!("invalid digit: {num:?}"),
+        }
     } else if s.starts_with(r"\'") {
         match &s[2..3] {
             "0" => '\0',
@@ -375,5 +410,14 @@ impl std::fmt::Display for Type {
             write!(f, "{}", txt)?;
         }
         Ok(())
+    }
+}
+
+impl Body {
+    pub fn len(&self) -> usize {
+        match self {
+            Body::Block(spans) => spans.len(),
+            Body::Statement(_) => 1,
+        }
     }
 }
