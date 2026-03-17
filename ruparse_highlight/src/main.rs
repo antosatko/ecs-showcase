@@ -1,29 +1,42 @@
 use core::panic;
 use std::fs;
 
+use dashmap::DashMap;
 use lang_ir::ast::{
     Body, Expression, Function, IdentifierPath, Literal, Module, Object, Parameter, Postfix,
     Statement, Type, Value,
 };
 use line_index::{LineCol, LineIndex, TextSize};
+use ruparse::{Parser, lexer::PreprocessorError, parser::ParseError};
 use ruparse_playground::{
     grammar::{Token, gen_parser},
     ruparse_lowering::module_named,
 };
+use tower_lsp::{LspService, Server};
 
-use crate::html::{MyStyle, Style};
+use crate::{
+    html::{MyStyle, Style},
+    lsp::Backend,
+};
 
 mod html;
+mod lsp;
 
-const TEST: &str = include_str!("../../ruparse-playground/src/lang");
+const TEST: &str = include_str!("../../ruparse-playground/src/lang.ecs");
 
-fn main() {
-    let indexed = index_file(TEST);
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
 
-    let style = MyStyle;
-    fs::write("test.html", &style.render(&indexed, TEST)).unwrap();
+    let (service, socket) = LspService::new(|client| Backend {
+        client,
+        document_map: DashMap::new(),
+        parser: gen_parser(),
+    });
+
+    Server::new(stdin, stdout, socket).serve(service).await;
 }
-
 #[derive(Debug, Copy, Clone)]
 struct Span {
     offset: usize,
@@ -41,27 +54,44 @@ pub enum Types {
     Keyword,
     String,
     Number,
-    Char,
     Operator,
     Type,
     SpecialOperator,
     Label,
 }
 
-fn index_file(src: &str) -> Vec<Span> {
+pub enum IndexErr<'a> {
+    Lex(PreprocessorError),
+    Parse(ParseError<'a>),
+    Idk,
+}
+
+fn index_file<'p, 'src>(parser: &'p Parser<'p>, src: &'src str) -> Result<Vec<Span>, IndexErr<'p>>
+where
+    'p: 'src,
+    'src: 'p,
+{
     let line_index = LineIndex::new(src);
     let mut spans = Vec::new();
 
-    let parser = gen_parser();
-    let tokens = parser.lexer.lex_utf8(src).unwrap();
+    let tokens = match parser.lexer.lex_utf8(src) {
+        Ok(t) => t,
+        Err(e) => return Err(IndexErr::Lex(e)),
+    };
     index_tokens(&tokens, &mut spans);
-    let module = parser.parse(&tokens, src).unwrap();
+    let module = match parser.parse(&tokens, src) {
+        Ok(m) => m,
+        Err(e) => return Err(IndexErr::Parse(e)),
+    };
 
-    let ast = module_named("", src, module.entry);
+    let ast = match module_named("", src, module.entry) {
+        Some(ast) => ast,
+        None => return Err(IndexErr::Idk),
+    };
 
     ast.index(&line_index, &mut spans);
 
-    spans
+    Ok(spans)
 }
 
 impl IntoSpan for Token<'_> {
@@ -69,8 +99,8 @@ impl IntoSpan for Token<'_> {
         Span {
             offset: self.index,
             len: self.len,
-            line: self.location.line,
-            column: self.location.column,
+            line: self.location.line - 1,
+            column: self.location.column - 1,
             ty: ty as _,
         }
     }
@@ -81,10 +111,11 @@ fn index_tokens(tokens: &Vec<Token>, spans: &mut Vec<Span>) {
     for token in tokens {
         match &token.kind {
             ruparse::lexer::TokenKinds::Complex(t) => match *t {
-                "tl docstr" | "docstr" => spans.push(token.span(Types::Comment, line_index)),
+                "tl docstr" | "docstr" | "comment" => {
+                    spans.push(token.span(Types::Comment, line_index))
+                }
                 "numeric" | "float" => spans.push(token.span(Types::Number, line_index)),
-                "char" => spans.push(token.span(Types::Char, line_index)),
-                "string" => spans.push(token.span(Types::String, line_index)),
+                "char" | "string" => spans.push(token.span(Types::String, line_index)),
                 a => panic!("got a: {a}"),
             },
             _ => (),
@@ -111,8 +142,8 @@ impl<T> IntoSpan for lang_ir::ast::Span<T> {
         Span {
             offset: self.location.index,
             len: self.location.len,
-            line: line as _,
-            column: col as _,
+            line: line as usize,
+            column: col as usize,
             ty: ty as _,
         }
     }
@@ -122,7 +153,6 @@ impl<T> IntoSpan for lang_ir::ast::Span<T> {
 
 impl IndexedWalk for Module {
     fn index(&self, line_index: &LineIndex, spans: &mut Vec<Span>) {
-        spans.extend(self.docs.iter().map(|d| d.span(Types::Comment, line_index)));
         self.objects.iter().for_each(|o| o.index(line_index, spans));
     }
 }
@@ -138,7 +168,6 @@ impl IndexedWalk for lang_ir::ast::Span<Object> {
             } => {
                 spans.push(self.span_word(Types::Keyword, line_index, "scheduler"));
                 spans.push(ident.span(Types::Ident, line_index));
-                spans.extend(docs.iter().map(|d| d.span(Types::Comment, line_index)));
 
                 resources.iter().for_each(|r| r.index(line_index, spans));
                 systems.iter().for_each(|s| s.index(line_index, spans));
@@ -152,7 +181,6 @@ impl IndexedWalk for lang_ir::ast::Span<Object> {
             }) => {
                 spans.push(self.span_word(Types::Keyword, line_index, "function"));
                 spans.push(ident.span(Types::Ident, line_index));
-                spans.extend(docs.iter().map(|d| d.span(Types::Comment, line_index)));
 
                 parameters.iter().for_each(|p| p.index(line_index, spans));
                 if let Some(ret) = return_type {
@@ -201,8 +229,6 @@ impl IndexedWalk for lang_ir::ast::Span<Statement> {
             } => {
                 spans.push(self.span_word(Types::Keyword, line_index, "if"));
                 condition.index(line_index, spans);
-                // If your syntax uses 'if cond => block', we capture it here:
-                // spans.push(condition.span_word(Types::SpecialOperator, line_index, "=>"));
                 then_block.index(line_index, spans);
 
                 for elif in else_if {
@@ -284,7 +310,6 @@ impl IndexedWalk for lang_ir::ast::Span<Expression> {
             Expression::Value(v) => v.index(line_index, spans),
             Expression::Binary { l, r, op } => {
                 l.index(line_index, spans);
-                // Highlight the Operator
                 spans.push(op.span(Types::Operator, line_index));
                 r.index(line_index, spans);
             }
@@ -324,10 +349,7 @@ impl IndexedWalk for lang_ir::ast::Span<Postfix> {
             Postfix::Field(ident) => spans.push(ident.span(Types::Ident, line_index)),
             Postfix::Call(args) => args.iter().for_each(|a| a.index(line_index, spans)),
             Postfix::Index(expr) => expr.index(line_index, spans),
-            // Assuming Refs and Derefs are operators like `&` and `*`
             Postfix::Refs(_) | Postfix::Derefs(_) => {
-                // If your Span<Postfix> encapsulates the exact location of `&` or `*`,
-                // you can push them as Types::Operator here.
                 spans.push(self.span(Types::Operator, line_index));
             }
         }
@@ -346,9 +368,7 @@ impl IndexedWalk for lang_ir::ast::Span<Literal> {
                 exprs.iter().for_each(|e| e.index(line_index, spans));
             }
             // Mapped to specific expanded types
-            Literal::Number(_) => spans.push(self.span(Types::Number, line_index)),
-            Literal::String(_) => spans.push(self.span(Types::String, line_index)),
-            Literal::Char(_) => spans.push(self.span(Types::Char, line_index)),
+            _ => (),
         }
     }
 }

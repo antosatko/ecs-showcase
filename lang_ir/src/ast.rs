@@ -260,7 +260,7 @@ pub enum NumberValue {
 
 /* ====================== LOWERING =====================*/
 
-pub fn numeric_literal(s: &str) -> Number {
+pub fn numeric_literal(s: &str) -> Option<Number> {
     let (s, radix) = if s.starts_with("0x") {
         (&s[2..], 16)
     } else if s.starts_with("0b") {
@@ -284,14 +284,14 @@ pub fn numeric_literal(s: &str) -> Number {
     };
 
     if is_float {
-        let value: f64 = num_str.parse().unwrap();
+        let value: f64 = num_str.parse().ok()?;
         let size = suffix.and_then(|s| s.parse().ok());
-        Number {
+        Some(Number {
             value: NumberValue::Float(value),
             size,
-        }
+        })
     } else {
-        let value = i128::from_str_radix(num_str, radix).expect(num_str);
+        let value = i128::from_str_radix(num_str, radix).ok()?;
 
         let (number_value, size) = match suffix.map(|s| s.to_lowercase()) {
             Some(ref s) if s.starts_with('u') => {
@@ -304,31 +304,31 @@ pub fn numeric_literal(s: &str) -> Number {
             }
             Some(ref s) if s.starts_with('c') => (NumberValue::Int(value), None),
             None => (NumberValue::Number(value as u128), None),
-            Some(other) => panic!("Unknown numeric suffix: {}", other),
+            Some(_) => return None,
         };
 
-        Number {
+        Some(Number {
             value: number_value,
             size,
-        }
+        })
     }
 }
 
-pub fn float_literal(s: &str) -> NumberValue {
+pub fn float_literal(s: &str) -> Option<NumberValue> {
     let s = s.replace('_', "");
-    NumberValue::Float(s.parse().unwrap())
+    Some(NumberValue::Float(s.parse().ok()?))
 }
 
-pub fn char_literal(s: &str) -> char {
+pub fn char_literal(s: &str) -> Option<char> {
     if s.starts_with(r"'\u{") {
         let unicode = s.trim_start_matches(r"'\u{").trim_end_matches("}'");
-        match numeric_literal(unicode).value {
-            NumberValue::Uint(n) => char::from_u32(n as _).unwrap(),
-            NumberValue::Number(n) => char::from_u32(n as _).unwrap(),
+        match numeric_literal(unicode)?.value {
+            NumberValue::Uint(n) => char::from_u32(n as _),
+            NumberValue::Number(n) => char::from_u32(n as _),
             num => panic!("invalid digit: {num:?}"),
         }
     } else if s.starts_with(r"\'") {
-        match &s[2..3] {
+        Some(match &s[2..3] {
             "0" => '\0',
             "a" => '\x07',
             "b" => '\x08',
@@ -337,10 +337,10 @@ pub fn char_literal(s: &str) -> char {
             "r" => '\r',
             "t" => '\t',
             "v" => '\x0B',
-            other => other.chars().next().unwrap(),
-        }
+            other => other.chars().next()?,
+        })
     } else {
-        s.chars().nth(1).unwrap()
+        s.chars().nth(1)
     }
 }
 pub fn string_literal(s: &str) -> SmolStr {

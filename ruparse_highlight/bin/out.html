@@ -1,0 +1,106 @@
+<pre style="background:#1E1E1E; color:#D4D4D4; padding:10px;"><code><span style="color:#6A9955">//! ============================================================</span>
+<span style="color:#6A9955">//! Language Syntax Guide: A Living Playground</span>
+<span style="color:#6A9955">//! ------------------------------------------------------------</span>
+<span style="color:#6A9955">//! This file acts as a reference for the language&#39;s grammar,</span>
+<span style="color:#6A9955">//! from basic types to complex control flow.</span>
+<span style="color:#6A9955">//! ============================================================</span>
+
+<span style="color:#6A9955">/// LESSON 1: The Scheduler</span>
+<span style="color:#6A9955">/// High-level entry points use the &#39;scheduler&#39; keyword.</span>
+<span style="color:#6A9955">/// This defines how the application initializes and runs.</span>
+<span style="color:#C586C0">scheduler</span> <span style="color:#9CDCFE">system_monitor</span> {
+    resources {
+        <span style="color:#6A9955">// Method calls use double-colon for namespaces</span>
+        <span style="color:#9CDCFE">hardware</span>::<span style="color:#9CDCFE">sensors</span>::<span style="color:#9CDCFE">calibrate</span>()
+    }
+
+    systems {
+        <span style="color:#6A9955">// Lists of lifecycle stages or task groups</span>
+        <span style="color:#9CDCFE">boot_sequence</span>
+        <span style="color:#9CDCFE">background_polling</span>
+    }
+}
+
+<span style="color:#6A9955">/// LESSON 2: Variables &amp; Types</span>
+<span style="color:#6A9955">/// Use &#39;var&#39; for declarations. Types follow a colon.</span>
+<span style="color:#C586C0">function</span> <span style="color:#9CDCFE">type_demonstration</span>() {
+    <span style="color:#6A9955">// Basic types and explicit typing</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">count</span>: <span style="color:#4EC9B0">int</span> = <span style="color:#B5CEA8">42</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">ratio</span>: <span style="color:#4EC9B0">f32</span> = <span style="color:#B5CEA8">3.14</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">active</span>: <span style="color:#4EC9B0">bool</span> = <span style="color:#9CDCFE">true</span>
+
+    <span style="color:#6A9955">// Character types with Unicode support</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">symbol</span>: <span style="color:#4EC9B0">char</span> = <span style="color:#CE9178">&#39;Ω&#39;</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">hex_char</span>: <span style="color:#4EC9B0">char</span> = <span style="color:#CE9178">&#39;\u{0x03A9}&#39;</span>
+
+    <span style="color:#6A9955">// Arrays can hold mixed-literal types in this grammar</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">collection</span> = [
+        <span style="color:#B5CEA8">100</span>,
+        <span style="color:#B5CEA8">0b101101</span>, <span style="color:#6A9955">// Binary literals</span>
+        <span style="color:#CE9178">&#39;A&#39;</span>,
+        <span style="color:#CE9178">&quot;Text&quot;</span>
+    ]
+
+    <span style="color:#DCDCAA">bla</span>: <span style="color:#C586C0">loop</span> <span style="color:#569CD6">=&gt;</span> <span style="color:#9CDCFE">true</span>
+}
+
+<span style="color:#6A9955">/// LESSON 3: Strings &amp; Raw Literals</span>
+<span style="color:#6A9955">/// The language supports standard and &quot;Raw&quot; strings using # delimiters.</span>
+<span style="color:#C586C0">function</span> <span style="color:#9CDCFE">string_tour</span>() {
+    <span style="color:#6A9955">// 1. Standard: Supports escapes like \n, \t, and \u{}</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">standard</span> = <span style="color:#CE9178">&quot;Line one\nLine two with \u{0x2728}&quot;</span>
+
+    <span style="color:#6A9955">// 2. Raw: No escapes processed. Syntax: #&quot;...&quot;#</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">raw</span> = <span style="color:#CE9178">#&quot;C:\Users\Name\Desktop&quot;#</span>
+
+    <span style="color:#6A9955">// 3. Multi-Hash Raw: Use more hashes if your string contains #&quot;</span>
+    <span style="color:#6A9955">// This allows you to include any sequence of characters.</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">complex_raw</span> = <span style="color:#CE9178">##&quot;This is a #&quot;raw string&quot;# inside hashes&quot;##</span>
+
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">deep_nesting</span> = <span style="color:#CE9178">###&quot;Allows ###&quot; without breaking&quot;###</span>
+}
+
+<span style="color:#6A9955">/// LESSON 4: Functions &amp; Expressions</span>
+<span style="color:#6A9955">/// Functions support multiple parameters, trailing commas, and arrows.</span>
+<span style="color:#C586C0">function</span> <span style="color:#9CDCFE">analyze_data</span>(<span style="color:#9CDCFE">value</span>: <span style="color:#4EC9B0">int</span>, <span style="color:#9CDCFE">factor</span>: <span style="color:#4EC9B0">f32</span>,): <span style="color:#4EC9B0">int</span> {
+
+    <span style="color:#6A9955">// Complex expressions: Note the prefix operator chaining !!-!!</span>
+    <span style="color:#6A9955">// The language allows dense operator stacking.</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">logic_test</span> = !!-!!-----<span style="color:#9CDCFE">factor</span>.**&amp;[<span style="color:#B5CEA8">0.5</span>]()
+
+    <span style="color:#6A9955">// Arrays/Buffers can be indexed using bracket notation immediately after calls</span>
+    <span style="color:#C586C0">var</span> <span style="color:#9CDCFE">status</span> = <span style="color:#9CDCFE">driver</span>.get_status(value,)[<span style="color:#B5CEA8">0b1</span>]
+
+    <span style="color:#6A9955">// Block return</span>
+    <span style="color:#C586C0">return</span> <span style="color:#9CDCFE">value</span>
+}
+
+<span style="color:#6A9955">/// Short-hand function: Use &#39;=&gt;&#39; for single-expression bodies</span>
+<span style="color:#C586C0">function</span> <span style="color:#9CDCFE">quick_check</span>(): <span style="color:#4EC9B0">bool</span> <span style="color:#569CD6">=&gt;</span> <span style="color:#9CDCFE">sensor</span>.is_active
+
+<span style="color:#6A9955">/// LESSON 5: Control Flow &amp; Loops</span>
+<span style="color:#6A9955">/// Supports labeled loops, break/continue, and standard if/else.</span>
+<span style="color:#C586C0">function</span> <span style="color:#9CDCFE">loop_mastery</span>(<span style="color:#9CDCFE">limit</span>: <span style="color:#4EC9B0">int</span>) {
+
+    <span style="color:#6A9955">// Labels are defined with a trailing colon</span>
+    <span style="color:#DCDCAA">outer_gate</span>: <span style="color:#C586C0">loop</span> {
+
+        <span style="color:#6A9955">// Single-line loops using arrows</span>
+        <span style="color:#DCDCAA">tick</span>: <span style="color:#C586C0">loop</span> <span style="color:#569CD6">=&gt;</span> <span style="color:#9CDCFE">print</span>(<span style="color:#CE9178">&quot;Pulse...&quot;</span>);
+
+        <span style="color:#C586C0">if</span> <span style="color:#9CDCFE">limit</span> <span style="color:#D4D4D4"></span>&gt; <span style="color:#B5CEA8">100</span> {
+            <span style="color:#6A9955">// Standard block-based while</span>
+            <span style="color:#C586C0">while</span> <span style="color:#9CDCFE">true</span> {
+                <span style="color:#6A9955">// Nested logic</span>
+            }
+        } <span style="color:#C586C0">else if</span> <span style="color:#9CDCFE">limit</span> <span style="color:#D4D4D4">=</span>= <span style="color:#B5CEA8">0</span> {
+            <span style="color:#6A9955">// Else-if branch</span>
+        } <span style="color:#C586C0">else</span> {
+            <span style="color:#6A9955">// Fallback branch</span>
+        }
+
+        <span style="color:#6A9955">// Labeled break to exit specific scopes</span>
+        <span style="color:#DCDCAA">exit_point</span>: <span style="color:#C586C0">break</span>
+    }
+}
+</code></pre>

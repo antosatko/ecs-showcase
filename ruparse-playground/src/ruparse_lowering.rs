@@ -13,7 +13,7 @@ use lang_ir::ast::{
     numeric_literal, string_literal,
 };
 
-pub fn module_named(name: impl Into<SmolStr>, src: &str, node: Node) -> Module {
+pub fn module_named(name: impl Into<SmolStr>, src: &str, node: Node) -> Option<Module> {
     let node = &Nodes::Node(node);
     let mut module = Module {
         name: name.into(),
@@ -33,7 +33,7 @@ pub fn module_named(name: impl Into<SmolStr>, src: &str, node: Node) -> Module {
 
                 if let Some(res) = s.try_get_node("resources").as_ref() {
                     for r in res.get_list("resources") {
-                        resources.push(value(src, r));
+                        resources.push(value(src, r)?);
                     }
                 }
 
@@ -58,7 +58,7 @@ pub fn module_named(name: impl Into<SmolStr>, src: &str, node: Node) -> Module {
                 let ident = expect_ident(src, s);
                 let params = parameters(src, s.expect_node("parameters"));
                 let return_type = s.try_get_node("return type").as_ref().map(|t| ty(src, t));
-                let body = body(src, s.expect_node("code body"));
+                let body = body(src, s.expect_node("code body"))?;
                 let docs = docstrings(src, s);
 
                 let obj = Object::Function(Function {
@@ -77,13 +77,13 @@ pub fn module_named(name: impl Into<SmolStr>, src: &str, node: Node) -> Module {
         }
     }
 
-    module
+    Some(module)
 }
 
-fn body(src: &str, node: &Nodes) -> Span<Body> {
-    span(
+fn body(src: &str, node: &Nodes) -> Option<Span<Body>> {
+    Some(span(
         match node.get_name() {
-            "code block" => Body::Block(block(src, node)),
+            "code block" => Body::Block(block(src, node)?),
             "code statement" => Body::Statement(expression(
                 src,
                 node.try_get_node("expression")
@@ -92,14 +92,14 @@ fn body(src: &str, node: &Nodes) -> Span<Body> {
                     .try_get_node("expression")
                     .as_ref()
                     .unwrap(),
-            )),
+            )?),
             other => unreachable!("expected code block or statement, got: {other}"),
         },
         node,
-    )
+    ))
 }
 
-fn block(src: &str, node: &Nodes) -> Vec<Span<Statement>> {
+fn block(src: &str, node: &Nodes) -> Option<Vec<Span<Statement>>> {
     let mut statements = Vec::new();
 
     for stmt_node in node.get_list("statements") {
@@ -110,7 +110,7 @@ fn block(src: &str, node: &Nodes) -> Vec<Span<Statement>> {
                 let expression = stmt_node
                     .try_get_node("expression")
                     .as_ref()
-                    .map(|e| expression(src, e));
+                    .map(|e| expression(src, e))?;
 
                 span(
                     Statement::Var {
@@ -124,18 +124,18 @@ fn block(src: &str, node: &Nodes) -> Vec<Span<Statement>> {
 
             "return" => {
                 let expr = expression(src, stmt_node.expect_node("expression"));
-                span(Statement::Return { expression: expr }, stmt_node)
+                span(Statement::Return { expression: expr? }, stmt_node)
             }
 
             "loop" => {
                 let label = try_label(src, stmt_node);
-                let body = body(src, stmt_node.expect_node("code body"));
+                let body = body(src, stmt_node.expect_node("code body"))?;
                 span(Statement::Loop { label, body }, stmt_node)
             }
 
             "expression statement" => {
                 let expr = expression(src, stmt_node.expect_node("expression"));
-                span(Statement::Expr { expression: expr }, stmt_node)
+                span(Statement::Expr { expression: expr? }, stmt_node)
             }
 
             "break" => span(
@@ -153,24 +153,25 @@ fn block(src: &str, node: &Nodes) -> Vec<Span<Statement>> {
             ),
 
             "if" => {
-                let condition = expression(src, stmt_node.expect_node("expression"));
-                let then_block = body(src, stmt_node.expect_node("code body"));
+                let condition = expression(src, stmt_node.expect_node("expression"))?;
+                let then_block = body(src, stmt_node.expect_node("code body"))?;
 
                 let mut else_if = Vec::new();
                 for elif in stmt_node.get_list("else if") {
-                    let condition = expression(src, elif.expect_node("expression"));
-                    let block = body(src, elif.expect_node("code body"));
+                    let condition = expression(src, elif.expect_node("expression"))?;
+                    let block = body(src, elif.expect_node("code body"))?;
                     else_if.push(span(ElseIf { condition, block }, elif));
                 }
 
-                let else_block = stmt_node.try_get_node("else").as_ref().map(|e| {
-                    span(
+                let else_block = match stmt_node.try_get_node("else").as_ref() {
+                    Some(e) => Some(span(
                         Else {
-                            block: body(src, e.expect_node("code body")),
+                            block: body(src, e.expect_node("code body"))?,
                         },
                         e,
-                    )
-                });
+                    )),
+                    None => None,
+                };
 
                 span(
                     Statement::If {
@@ -185,8 +186,8 @@ fn block(src: &str, node: &Nodes) -> Vec<Span<Statement>> {
 
             "while" => {
                 let label = try_label(src, stmt_node);
-                let condition = expression(src, stmt_node.expect_node("expression"));
-                let body = body(src, stmt_node.expect_node("code body"));
+                let condition = expression(src, stmt_node.expect_node("expression"))?;
+                let body = body(src, stmt_node.expect_node("code body"))?;
 
                 span(
                     Statement::While {
@@ -204,7 +205,7 @@ fn block(src: &str, node: &Nodes) -> Vec<Span<Statement>> {
         statements.push(stmt);
     }
 
-    statements
+    Some(statements)
 }
 
 #[track_caller]
@@ -214,10 +215,10 @@ fn try_label(src: &str, node: &Nodes) -> Option<Span<SmolStr>> {
         .map(|l| expect_ident(src, l))
 }
 
-fn expression(src: &str, node: &Nodes) -> Span<Expression> {
-    let items = expression_items(src, node);
+fn expression(src: &str, node: &Nodes) -> Option<Span<Expression>> {
+    let items = expression_items(src, node)?;
     let mut pos = 0;
-    parse_expression_prec(&items, &mut pos, 0)
+    Some(parse_expression_prec(&items, &mut pos, 0))
 }
 
 fn parse_expression_prec(
@@ -270,11 +271,11 @@ fn parse_expression_prec(
     lhs
 }
 
-fn expression_items(src: &str, node: &Nodes) -> Vec<Span<ExprItem>> {
+fn expression_items(src: &str, node: &Nodes) -> Option<Vec<Span<ExprItem>>> {
     let mut items = Vec::new();
 
     let lvalue_node = node.expect_node("lvalue");
-    let lvalue = value(src, &lvalue_node);
+    let lvalue = value(src, &lvalue_node)?;
     items.push(lvalue.map(|v| ExprItem::Value(Expression::Value(v))));
 
     for entry in node.get_list("rest") {
@@ -284,13 +285,13 @@ fn expression_items(src: &str, node: &Nodes) -> Vec<Span<ExprItem>> {
                 items.push(op.map(ExprItem::Operator));
             }
             Nodes::Node(_) => {
-                let v = value(src, entry);
+                let v = value(src, entry)?;
                 items.push(v.map(|v| ExprItem::Value(Expression::Value(v))));
             }
         }
     }
 
-    items
+    Some(items)
 }
 
 fn operator(src: &str, node: &Nodes) -> Span<Operator> {
@@ -321,14 +322,6 @@ fn operator(src: &str, node: &Nodes) -> Span<Operator> {
 }
 
 #[track_caller]
-pub fn ident(src: &str, node: &Nodes) -> Option<Span<SmolStr>> {
-    node.try_get_node("identifier").as_ref().map(|t| match t {
-        Nodes::Node(n) => span_from_node(t.stringify(src).into(), n),
-        Nodes::Token(tok) => span_from_token(tok.stringify(src).into(), tok),
-    })
-}
-
-#[track_caller]
 pub fn expect_ident(src: &str, node: &Nodes) -> Span<SmolStr> {
     let t = node.expect_node("identifier");
     match t {
@@ -347,32 +340,30 @@ fn ident_path(src: &str, node: &Nodes) -> Span<IdentifierPath> {
     span(IdentifierPath { path }, node)
 }
 
-fn literal(src: &str, node: &Nodes) -> Span<Literal> {
+fn literal(src: &str, node: &Nodes) -> Option<Span<Literal>> {
     match node {
         Nodes::Node(n) => match n.name {
             "identifier path" => {
                 let path = ident_path(src, node);
-                path.map(Literal::Identifier)
+                Some(path.map(Literal::Identifier))
             }
 
             "array literal" => {
-                let elements = n
-                    .get_list("elements")
-                    .iter()
-                    .map(|e| expression(src, e))
-                    .collect();
+                let mut elements = Vec::new();
+                for e in n.get_list("elements") {
+                    elements.push(expression(src, e)?)
+                }
 
-                span(Literal::Array(elements), node)
+                Some(span(Literal::Array(elements), node))
             }
 
             "tuple" => {
-                let elements = n
-                    .get_list("elements")
-                    .iter()
-                    .map(|e| expression(src, e))
-                    .collect();
+                let mut elements = Vec::new();
+                for e in n.get_list("elements") {
+                    elements.push(expression(src, e)?)
+                }
 
-                span(Literal::Tuple(elements), node)
+                Some(span(Literal::Tuple(elements), node))
             }
 
             other => node.ice(&format!("Unhandled literal node: {}", other)),
@@ -380,15 +371,20 @@ fn literal(src: &str, node: &Nodes) -> Span<Literal> {
 
         Nodes::Token(tok) => match &tok.kind {
             ruparse::lexer::TokenKinds::Complex(kind) => match kind.as_ref() {
-                "string" => {
-                    span_from_token(Literal::String(string_literal(&tok.stringify(src))), tok)
-                }
+                "string" => Some(span_from_token(
+                    Literal::String(string_literal(&tok.stringify(src))),
+                    tok,
+                )),
 
-                "char" => span_from_token(Literal::Char(char_literal(&tok.stringify(src))), tok),
+                "char" => Some(span_from_token(
+                    Literal::Char(char_literal(&tok.stringify(src))?),
+                    tok,
+                )),
 
-                "numeric" | "float" => {
-                    span_from_token(Literal::Number(numeric_literal(&tok.stringify(src))), tok)
-                }
+                "numeric" | "float" => Some(span_from_token(
+                    Literal::Number(numeric_literal(&tok.stringify(src))?),
+                    tok,
+                )),
 
                 other => panic!("Unhandled token literal kind: {}", other),
             },
@@ -398,16 +394,16 @@ fn literal(src: &str, node: &Nodes) -> Span<Literal> {
     }
 }
 
-fn value(src: &str, node: &Nodes) -> Span<Value> {
-    let literal = literal(src, node.expect_node("literal"));
+fn value(src: &str, node: &Nodes) -> Option<Span<Value>> {
+    let literal = literal(src, node.expect_node("literal"))?;
 
-    span(
+    Some(span(
         Value {
             literal,
             postfix: Vec::new(),
         },
         node,
-    )
+    ))
 }
 
 fn ty(src: &str, node: &Nodes) -> Span<Type> {

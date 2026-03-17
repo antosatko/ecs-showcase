@@ -7,7 +7,7 @@ mod ruparse_lowering;
 
 pub use lang_ir::ast;
 
-const TXT: &'static str = include_str!("lang");
+const TXT: &'static str = include_str!("lang.ecs");
 
 fn main() {
     let parser = grammar::gen_parser();
@@ -27,7 +27,7 @@ fn main() {
     let result = parser.parse(&tokens, TXT);
     match result {
         Ok(result) => {
-            let module = module_named("lang", TXT, result.entry);
+            let module = module_named("lang", TXT, result.entry).unwrap();
 
             println!();
             for doc in module.docs {

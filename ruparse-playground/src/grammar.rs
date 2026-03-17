@@ -99,13 +99,14 @@ fn count_hashes(tokens: &[Token]) -> usize {
         .count()
 }
 
-pub fn gen_parser<'src>() -> Parser<'static, 'src> {
+pub fn gen_parser<'src>() -> Parser<'static> {
     let mut parser = Parser::new();
 
     parser.lexer.add_tokens(
         "+ - * / \\ ; \" ' : :: ( { [ < > ] } ) | & ! ? = . , # == != += -= *= /= %= && || >= <= =>"
             .split_whitespace(),
     );
+    parser.grammar.ignored.push(TokenKinds::Complex("comment"));
     parser.lexer.preprocessors.push(|src, tokens| {
         use ruparse::lexer::TokenKinds;
         let mut i = 0;
@@ -180,7 +181,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                             }
                             let tok = Token {
                                 index: tokens[start].index,
-                                len: tokens[i].index - tokens[start].index - 1,
+                                len: tokens[i].index - tokens[start].index,
                                 location: tokens[start].location,
                                 kind: TokenKinds::Complex("docstr"),
                             };
@@ -198,7 +199,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                             }
                             let tok = Token {
                                 index: tokens[start].index,
-                                len: tokens[i].index - tokens[start].index - 1,
+                                len: tokens[i].index - tokens[start].index,
                                 location: tokens[start].location,
                                 kind: TokenKinds::Complex("tl docstr"),
                             };
@@ -211,6 +212,13 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                             {
                                 i += 1;
                             }
+                            let tok = Token {
+                                index: tokens[start].index,
+                                len: tokens[i].index - tokens[start].index,
+                                location: tokens[start].location,
+                                kind: TokenKinds::Complex("comment"),
+                            };
+                            result.push(tok);
                             continue;
                         }
                     }
@@ -257,13 +265,13 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                                         }
                                         (Some(TokenKinds::Token(op)), Some(_), _) if *op == "{" => {
                                             Err(PreprocessorError {
-                                                err: &EXPECTED_UNICODE,
+                                                err: EXPECTED_UNICODE,
                                                 location: tokens[i + 4].location,
                                                 len: tokens[i + 4].len,
                                             })?
                                         }
                                         _ => Err(PreprocessorError {
-                                            err: &EXPECTED_UNICODE,
+                                            err: EXPECTED_UNICODE,
                                             location: tokens[i + 2].location,
                                             len: tokens[i + 2].len,
                                         })?,
@@ -271,7 +279,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                                 } else {
                                     // unknown
                                     Err(PreprocessorError {
-                                        err: &UNKNOWN_CHARACTER,
+                                        err: UNKNOWN_CHARACTER,
                                         location: tokens[i + 1].location,
                                         len: t.len + 1,
                                     })?
@@ -284,14 +292,14 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                                         continue;
                                     }
                                     _ => Err(PreprocessorError {
-                                        err: &UNCLOSED_CHAR_LIT,
+                                        err: UNCLOSED_CHAR_LIT,
                                         location: tok.location,
                                         len: t.len + 2,
                                     })?,
                                 }
                             }
                             _ => Err(PreprocessorError {
-                                err: &UNCLOSED_CHAR_LIT,
+                                err: UNCLOSED_CHAR_LIT,
                                 location: tok.location,
                                 len: tok.len + tokens[i + 1].len,
                             })?,
@@ -301,7 +309,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                         let chars = tokens[i + 1].stringify(src).chars();
                         if chars.count() > 1 {
                             Err(PreprocessorError {
-                                err: &CHARACTER_OVERFLOW,
+                                err: CHARACTER_OVERFLOW,
                                 location: tok.location,
                                 len: tok.len + tokens[i + 1].len,
                             })?
@@ -319,24 +327,24 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                                 continue;
                             }
                             _ => Err(PreprocessorError {
-                                err: &UNCLOSED_CHAR_LIT,
+                                err: UNCLOSED_CHAR_LIT,
                                 location: tok.location,
                                 len: tok.len + tokens[i + 1].len,
                             })?,
                         }
                     }
                     Some(TokenKinds::Token(t)) if *t == "'" => Err(PreprocessorError {
-                        err: &EMPTY_CHAR_LIT,
+                        err: EMPTY_CHAR_LIT,
                         location: tok.location,
                         len: 1,
                     })?,
                     Some(_) => Err(PreprocessorError {
-                        err: &UNKNOWN_CHARACTER,
+                        err: UNKNOWN_CHARACTER,
                         location: tokens[i + 1].location,
                         len: tokens[i + 1].len,
                     })?,
                     None => Err(PreprocessorError {
-                        err: &UNCLOSED_CHAR_LIT,
+                        err: UNCLOSED_CHAR_LIT,
                         location: tok.location,
                         len: 1,
                     })?,
@@ -361,7 +369,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                         }
                     }
                     Err(PreprocessorError {
-                        err: &UNCLOSED_STRING_LIT,
+                        err: UNCLOSED_STRING_LIT,
                         location: tok.location,
                         len: tok.len,
                     })?
@@ -395,7 +403,7 @@ pub fn gen_parser<'src>() -> Parser<'static, 'src> {
                             }
                         }
                         Err(PreprocessorError {
-                            err: &UNCLOSED_STRING_LIT,
+                            err: UNCLOSED_STRING_LIT,
                             location: tok.location,
                             len: tok.len,
                         })?

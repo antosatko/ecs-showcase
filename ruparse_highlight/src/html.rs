@@ -10,7 +10,6 @@ impl Style for MyStyle {
             Types::Keyword => "#C586C0",         // Magenta/Purple
             Types::String => "#CE9178",          // Orange/Terracotta
             Types::Number => "#B5CEA8",          // Light Green/Yellow
-            Types::Char => "#D7BA7D",            // Gold
             Types::Operator => "#D4D4D4",        // Light Gray
             Types::Type => "#4EC9B0",            // Teal
             Types::SpecialOperator => "#569CD6", // Distinct blue for control flow symbols

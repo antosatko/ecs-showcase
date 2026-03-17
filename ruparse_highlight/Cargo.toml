@@ -8,3 +8,6 @@ line-index = "0.1.2"
 ruparse-playground = { path = "../ruparse-playground" }
 lang_ir = { path = "../lang_ir" }
 ruparse = { path = "../../mylibs/ruparse" }
+tower-lsp = "0.20.0"
+tokio = { version = "1.50.0", features = ["full"] }
+dashmap = "6.1.0"

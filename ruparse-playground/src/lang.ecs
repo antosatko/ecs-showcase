@@ -28,16 +28,16 @@ function type_demonstration() {
     var count: int = 42
     var ratio: f32 = 3.14
     var active: bool = true
-    
+
     // Character types with Unicode support
     var symbol: char = 'Ω'
     var hex_char: char = '\u{0x03A9}'
 
     // Arrays can hold mixed-literal types in this grammar
     var collection = [
-        100, 
+        100,
         0b101101, // Binary literals
-        'A', 
+        'A',
         "Text"
     ]
 
@@ -53,17 +53,17 @@ function string_tour() {
     // 2. Raw: No escapes processed. Syntax: #"..."#
     var raw = #"C:\Users\Name\Desktop"#
 
-    // 3. Multi-Hash Raw: Use more hashes if your string contains #" 
+    // 3. Multi-Hash Raw: Use more hashes if your string contains #"
     // This allows you to include any sequence of characters.
     var complex_raw = ##"This is a #"raw string"# inside hashes"##
-    
+
     var deep_nesting = ###"Allows ###" without breaking"###
 }
 
 /// LESSON 4: Functions & Expressions
 /// Functions support multiple parameters, trailing commas, and arrows.
 function analyze_data(value: int, factor: f32,): int {
-    
+
     // Complex expressions: Note the prefix operator chaining !!-!!
     // The language allows dense operator stacking.
     var logic_test = !!-!!-----factor.**&[0.5]()
@@ -81,10 +81,10 @@ function quick_check(): bool => sensor.is_active
 /// LESSON 5: Control Flow & Loops
 /// Supports labeled loops, break/continue, and standard if/else.
 function loop_mastery(limit: int) {
-    
+
     // Labels are defined with a trailing colon
     outer_gate: loop {
-        
+
         // Single-line loops using arrows
         tick: loop => print("Pulse...");
 
