@@ -18,7 +18,7 @@ pub fn move_all() {
     struct GravityTag;
 
     fn movement(mut query: Query<(&mut Position, &Velocity)>) {
-        for (mut position, velocity) in &mut query {
+        for (mut position, velocity) in query.iter_mut() {
             position.0.0 += velocity.0.0;
             position.0.1 += velocity.0.1;
         }
